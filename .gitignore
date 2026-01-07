@@ -1,0 +1,11 @@
+*
+!tests/
+tests/*
+!tests/cProgram.c
+!src/
+!src/*
+!.gitignore
+!KnowledgeBase.json
+!target.json
+!launch.json
+!Makefile

@@ -1,0 +1,9 @@
+{
+  "target":10,
+  "constraints": [
+    "uid_sid>0",
+    "uid_sid<10000000000"
+  ],
+  "dump": "foo",
+  "desired_target": "_,_,_"
+}
