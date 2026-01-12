@@ -174,7 +174,8 @@ public:
                 FullSourceLoc fullLoc = astContext.getFullLoc(binOp->getExprLoc());
                 unsigned line = fullLoc.getSpellingLineNumber();
                 unsigned stmtID = reinterpret_cast<uintptr_t>(binOp); // pointer-based ID
-
+                std::stack<std::string> tmpStack = conditionStack;
+                
                 DefinitionInfo info = {
                     newDef,
                     line,
@@ -182,13 +183,14 @@ public:
                     newDef.ssaName() + " = " + substituted,
                     usedVars,
                     std::vector<std::string>()  // copy stack to vector
+                    //let try to copy full content of conditional stack here if its good ok else reset to previous statement
+                    //tmpStack
                 };
-
-                std::stack<std::string> tmpStack = conditionStack;
                 while (!tmpStack.empty()) {
                     info.conditionContext.insert(info.conditionContext.begin(), tmpStack.top());
                     tmpStack.pop();
                 }
+                
 
                 lineToDefinitions[line].push_back(info);
                 varDefs[newDef.ssaName()] = info;
@@ -272,9 +274,26 @@ public:
             llvm::outs() << "Variable: " << var << "\n";
             for (const auto* def : defs) {
                 llvm::outs() << "  [" << def->ssaVar.name << "] Line " << def->line
-                             << ", stmtID=" << def->stmtID << ": " << def->exprString << "\n";
+                             << ", stmtID=" << def->stmtID << ": " << def->exprString <<"\n";
+                             // testing if conditional stack is empty to print full defintion contex
+                if((def->conditionContext).size()==0){
+                    llvm::outs() << " cond empty \n";
+                }else{
+                    for (size_t i = 0; i < (def->conditionContext).size(); i++)
+                    {
+                        cout<< (def->conditionContext)[i];
+                        if(i==(def->conditionContext).size()-1){ 
+                            cout << " \n";
+                        }else{
+                            cout <<" && \n";
+                        }
+                         /* code */
+                    }
+                    
+                    
+                }                 
             }
-            llvm::outs() << "\n";
+            
         }
     }
 

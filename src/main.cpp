@@ -238,7 +238,10 @@ unsigned int getTargetInstructionSourceLine(string targetJsonFile) {
 
 #include "AggregateASTConsumer.cpp"
 
+#include "CfgSSAConsumer.cpp"
+
 using namespace llvm;
+
 //static cl::opt<std::string> FileName(cl::Positional, cl::desc("Input file"),cl::Required);
 
 int main(int argc, const char **argv) {
@@ -346,12 +349,13 @@ llvm::raw_fd_ostream outFile("output.txt", error_code, llvm::sys::fs::OF_None);
   SsaASTConsumer TheConsumer2(SourceMgr, ReWr, Ctx);
   SsaASTConsumer* consumer2Ssa=&TheConsumer2;
   AggregateASTConsumer astConsumers;
-  // astConsumers.consumers.push_back(consumer0); //loop handling 
+    // astConsumers.consumers.push_back(consumer0); //loop handling 
+  
 
   //astConsumers.consumers.push_back(consumer3);
   astConsumers.consumers.push_back(consumer3);
   astConsumers.consumers.push_back(consumer2Ssa);
-
+ 
 
 
 
@@ -360,13 +364,11 @@ llvm::raw_fd_ostream outFile("output.txt", error_code, llvm::sys::fs::OF_None);
   
   //cout<<"running well list size " <<AllTrackedVariables.size()<<"\n";
   logFile<<"running well list size " <<AllTrackedVariables.size()<<"\n";
-    
-
-  
+   
   //printListOfUniqueVariables();  
 
-  //printAtomicVector(listOfAtomicElements);
- /* SmtSolver smt(listOfAtomicElements);
+  /*printAtomicVector(listOfAtomicElements);
+  SmtSolver smt(listOfAtomicElements);
   smt.printListOfUniqueVariables();
   smt.generatePyZ3();
 */
@@ -403,6 +405,10 @@ llvm::raw_fd_ostream outFile("output.txt", error_code, llvm::sys::fs::OF_None);
   PyRun_SimpleString("from time import time,ctime\n"
                       "print 'Today is',ctime(time())\n");
   Py_Finalize();*/
+// //CfSSAConsumer cfSsaConsumer; //this version does not complie with my reasoning
+
+//  cout << "//////////////////////////// suiiiiiiiiiiiiiiiii \n";
+//   astConsumers.consumers.push_back(&cfSsaConsumer);
 
  
   return 0;
