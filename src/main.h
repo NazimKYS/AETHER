@@ -167,38 +167,6 @@ RawPathCondition collectPathToTarget(const clang::FunctionDecl* func, const clan
 
 
 
-class CfSSABuilder {
-public:
-    struct SSAVar {
-        std::string name;
-        unsigned version = 0;
-        const clang::Expr* rhsExpr = nullptr;  // ← ADD THIS
-        const clang::Stmt* defStmt = nullptr;
-        clang::SourceLocation loc;
-    };
-
-    using VarName = std::string;
-    using VersionMap = std::map<VarName, unsigned>;
-    using SSAInfo = std::map<const clang::Stmt*, SSAVar>;
-
-    void buildSSAForFunction(const clang::FunctionDecl* FD, clang::ASTContext& Ctx);
-
-    const SSAInfo& getSSAInfo() const { return ssaInfo; }
-    void dump(const clang::SourceManager& SM) const;
-
-private:
-    SSAInfo ssaInfo;
-    std::map<VarName, unsigned> globalVersionCounter;
-
-    void processCFG(const clang::CFG& cfg, clang::ASTContext& Ctx);
-    void processBlock(const clang::CFGBlock& block, VersionMap currentDefs, clang::ASTContext& Ctx);
-void handleAssignment(const clang::BinaryOperator* BO, VersionMap& currentDefs, clang::ASTContext& Ctx);
-    std::string getVarName(clang::Expr* expr);
-};
-
-
-#include <optional>
-
 #endif
 
 

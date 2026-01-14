@@ -219,10 +219,7 @@ unsigned int getTargetInstructionSourceLine(string targetJsonFile) {
 #include "ConditionPathAstConsumer.cpp"
 
 
-//std::unique_ptr<ParentMap> PM ;//= llvm::make_unique<ParentMap>(FD->getBody());
-//std::unique_ptr<CFGStmtMap> CM ;//= llvm::make_unique<CFGStmtMap>(cfg, PM.get());
-//ParentMap *PM =nullptr;//= llvm::make_unique<ParentMap>(FD->getBody());
-//CFGStmtMap *CM=nullptr ;//= llvm::make_unique<CFGStmtMap>(cfg, PM.get());
+
 
 
 
@@ -238,7 +235,7 @@ unsigned int getTargetInstructionSourceLine(string targetJsonFile) {
 
 #include "AggregateASTConsumer.cpp"
 
-#include "CfgSSAConsumer.cpp"
+
 
 using namespace llvm;
 
@@ -274,8 +271,11 @@ int main(int argc, const char **argv) {
     // CompilerInstance will hold the instance of the Clang compiler for us,
     // managing the various objects needed to run the compiler.
   CompilerInstance CI;
-  DiagnosticOptions diagnosticOptions;
+  /*DiagnosticOptions diagnosticOptions;
+  auto DiagClient = new clang::TextDiagnosticPrinter(llvm::errs(), &diagnosticOptions);
+  CI.createDiagnostics(DiagClient, true);*/
   CI.createDiagnostics(NULL, false);
+  
   using clang::TargetOptions;
   std::shared_ptr<TargetOptions> TO = std::make_shared<TargetOptions>();
   TO->Triple = llvm::sys::getDefaultTargetTriple();
@@ -322,15 +322,13 @@ CI.getSourceManager().setMainFileID(mainFileID);
   
   Rewriter& ReWr = TheRewriter;
   std::error_code error_code;
-llvm::raw_fd_ostream outFile("output.txt", error_code, llvm::sys::fs::OF_None);
+  llvm::raw_fd_ostream outFile("output.txt", error_code, llvm::sys::fs::OF_None);
   ReWr.getEditBuffer(SourceMgr.getMainFileID()).write(outFile); // --> this will write the result to outFile
   outFile.close();
 
 
   // Create an AST consumer instance which is going to get called by ParseAST.
   ASTContext& Ctx =CI.getASTContext();
-  
-  
   ConditionPathAstConsumer TheConsumer3(SourceMgr, ReWr, Ctx);//new MySecASTConsumer(SourceMgr, ReWr, Ctx);
   ConditionPathAstConsumer* consumer3=&TheConsumer3;//new MySecASTConsumer(SourceMgr, ReWr, Ctx);
   
@@ -356,7 +354,6 @@ llvm::raw_fd_ostream outFile("output.txt", error_code, llvm::sys::fs::OF_None);
   astConsumers.consumers.push_back(consumer3);
   astConsumers.consumers.push_back(consumer2Ssa);
  
-
 
 
   //ParseAST(CI.getSema());
