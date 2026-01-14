@@ -10,6 +10,15 @@ public:
   ASTContext *globalAstContext;
   std::vector<StmtAttributes> vectorOfParentStmt = {};
   const FunctionDecl *parentFunctionOfProgramPoint;
+
+  struct PathCondition {
+        const clang::Expr* conditionExpr;
+        bool isTrueBranch; // true = then, false = else
+        std::string smtString; // optional: precomputed string
+    };
+
+  std::vector<PathCondition> pathConditions; // ← NEW
+
   TargetProgramPoint(){};
   TargetProgramPoint(const Stmt *targetStmt, ASTContext &astContext) {
     globalTargetStmt = targetStmt;
@@ -54,6 +63,96 @@ void findParentStmt(const Stmt *s, bool allParentsFound) {
   }
 }
 
+  void getConditionPathV2() {
+    cout<<"running getConditionPathV2 here\n";
+    ASTContext *astContext = globalAstContext;
+
+    const SourceManager &srcMgr = astContext->getSourceManager();
+
+    const Expr *condition;
+    std::string expression = "";
+    std::vector<std::string> allExpressions = {};
+
+    std::string condState = "";
+    pathConditions.clear();
+    for (unsigned int i = 0; i < vectorOfParentStmt.size(); ++i) {
+      //cout<<" for loop getConditionPath index "<<i<<" \n";
+      const Stmt *st = vectorOfParentStmt[i].st;
+      if (isa<IfStmt>(st)) {
+        const IfStmt *ifStmt = cast<IfStmt>(st);
+        condition = ifStmt->getCond();
+        if (!condition) continue;
+
+        bool isTrueBranch = false;
+        //checking condition state disable comment after mapping new nodes of dataStructure
+        
+        if ( vectorOfParentStmt.size()> (i - 1) ) {
+          StmtAttributes nextStmt = vectorOfParentStmt[i - 1];
+          if (nextStmt.id == (ifStmt->getThen())->getID(*globalAstContext)) {
+            // comment line 260 & 266
+            cout<<"vectorSize = "<<vectorOfParentStmt.size()<<" access element vector[ "<<i - 1 <<" ]\n";
+            condState = "";
+            isTrueBranch = true;
+            //listOfAtomicElements.push_back(AtomicElementOfConditionPath("unaryOp","Not Not"));
+
+          }
+          if(ifStmt->getElse()){
+            if(nextStmt.id == (ifStmt->getElse())->getID(*globalAstContext)) {
+                condState = "Not";
+                isTrueBranch = false;
+                //listOfAtomicElements.push_back(AtomicElementOfConditionPath("unaryOp","Not"));
+            }
+          }
+          
+        } // check if we are in the block of then or in the else block
+       
+        
+        PathCondition pc;
+        pc.conditionExpr = condition;
+        pc.isTrueBranch = isTrueBranch;
+
+        const Stmt *conditionStmt= ifStmt->getCond(); 
+        if(condState=="Not"){
+          
+          NodeTool *tree = new NodeTool(conditionStmt);
+          NodeTool root(condState,tree);
+          //cout<<"roooooooooooooot Not \n"<<root.pyz3ApiFlatten()<<"\n";
+          pc.smtString = root.pyz3ApiFlatten();
+        }else{
+          //NodeTool *tree = new NodeTool(conditionStmt); /* to avoid ==10661==ERROR: LeakSanitizer: detected memory leaks Direct leak of 96 byte(s) in 1 object(s) allocated from:    1 0x5d81cfdda85a in TargetProgramPoint::getConditionPathV2() src/TargetProgramPoint.cpp:315 */
+          NodeTool tree(conditionStmt);
+          //cout<<"roooooooooooooot true \n"<<tree.pyz3ApiFlatten()<<"\n";
+          pc.smtString = tree.pyz3ApiFlatten();
+          
+        }
+        pathConditions.push_back(pc);
+        binaryOpToStrV2(conditionStmt,globalAstContext);
+        
+        // testing binaryStrV2 
+        /*
+        allExpressions.push_back(
+            condState + "( " +  binaryOpToStr(conditionStmt, srcMgr, globalAstContext)  + " )");
+        //cout<<"allexpression size"<< allExpressions.size()<<"\n";*/
+      }  
+    }
+
+    // disable printing final expression while testing new datStructure
+    /*if (allExpressions.size() == 0) {
+      cout << "the target instruction will be executed at each call of "<<
+      parentFunctionOfProgramPoint->getNameInfo().getName().getAsString()
+              <<" function \n";
+    } else {
+
+      for (unsigned int i = 0; i < allExpressions.size() - 1; i++) {
+        expression = expression + allExpressions[i] + " and ";
+      }
+      cout << expression + allExpressions[allExpressions.size() - 1] << "\n";
+    }*/
+
+  }
+  void printPathCondition(){
+    
+  }
   void findParentStmtOld(const Stmt *s, bool allParentsFound) {
     /*currentCallCounter++;
     logFile<<" starting findparent CALL COUNTER :# "<< currentCallCounter<<"\n";*/
@@ -96,83 +195,6 @@ void findParentStmt(const Stmt *s, bool allParentsFound) {
         // TODO: handle nodes with more than 1 direct parents
       }*/
     }
-  }
-
-
-  void getConditionPathV2() {
-    cout<<"running getConditionPathV2 here\n";
-    ASTContext *astContext = globalAstContext;
-
-    const SourceManager &srcMgr = astContext->getSourceManager();
-
-    const Expr *condition;
-    std::string expression = "";
-    std::vector<std::string> allExpressions = {};
-
-    std::string condState = "";
-    for (unsigned int i = 0; i < vectorOfParentStmt.size(); ++i) {
-      //cout<<" for loop getConditionPath index "<<i<<" \n";
-      const Stmt *st = vectorOfParentStmt[i].st;
-      if (isa<IfStmt>(st)) {
-         const IfStmt *ifStmt = cast<IfStmt>(st);
-
-        //checking condition state disable comment after mapping new nodes of dataStructure
-        
-        if ( vectorOfParentStmt.size()> (i - 1) ) {
-          StmtAttributes nextStmt = vectorOfParentStmt[i - 1];
-          if (nextStmt.id == (ifStmt->getThen())->getID(*globalAstContext)) {
-            // comment line 260 & 266
-            cout<<"vectorSize = "<<vectorOfParentStmt.size()<<" access element vector[ "<<i - 1 <<" ]\n";
-            condState = "";
-            //listOfAtomicElements.push_back(AtomicElementOfConditionPath("unaryOp","Not Not"));
-
-          }
-          if(ifStmt->getElse()){
-            if(nextStmt.id == (ifStmt->getElse())->getID(*globalAstContext)) {
-                condState = "Not";
-                //listOfAtomicElements.push_back(AtomicElementOfConditionPath("unaryOp","Not"));
-            }
-          }
-          
-        } // check if we are in the block of then or in the else block
-       
-        condition = ifStmt->getCond();
-     
-        const Stmt *conditionStmt= ifStmt->getCond(); 
-        if(condState=="Not"){
-          NodeTool *tree = new NodeTool(conditionStmt);
-          NodeTool root(condState,tree);
-          cout<<"roooooooooooooot Not \n"<<root.pyz3ApiFlatten()<<"\n";
-        }else{
-          //NodeTool *tree = new NodeTool(conditionStmt); /* to avoid ==10661==ERROR: LeakSanitizer: detected memory leaks Direct leak of 96 byte(s) in 1 object(s) allocated from:    1 0x5d81cfdda85a in TargetProgramPoint::getConditionPathV2() src/TargetProgramPoint.cpp:315 */
-          NodeTool tree(conditionStmt);
-          cout<<"roooooooooooooot true \n"<<tree.pyz3ApiFlatten()<<"\n";
-          
-        }
-        
-        binaryOpToStrV2(conditionStmt,globalAstContext);
-        
-        // testing binaryStrV2 
-        /*
-        allExpressions.push_back(
-            condState + "( " +  binaryOpToStr(conditionStmt, srcMgr, globalAstContext)  + " )");
-        //cout<<"allexpression size"<< allExpressions.size()<<"\n";*/
-      }  
-    }
-
-    // disable printing final expression while testing new datStructure
-    /*if (allExpressions.size() == 0) {
-      cout << "the target instruction will be executed at each call of "<<
-      parentFunctionOfProgramPoint->getNameInfo().getName().getAsString()
-              <<" function \n";
-    } else {
-
-      for (unsigned int i = 0; i < allExpressions.size() - 1; i++) {
-        expression = expression + allExpressions[i] + " and ";
-      }
-      cout << expression + allExpressions[allExpressions.size() - 1] << "\n";
-    }*/
-
   }
 
   void getConditionPath() {

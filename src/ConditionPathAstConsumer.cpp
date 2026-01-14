@@ -57,6 +57,7 @@ public:
     cout<<"\n\n *** Condition path *** \n\n";
     auto stratChronoGetConditionPath = high_resolution_clock::now();
     //(visitor.targetPoint).getConditionPath();
+    (visitor.targetPoint).getConditionPathV2();
     auto endChronoGetConditionPath = high_resolution_clock::now();
  
 
@@ -77,7 +78,7 @@ public:
     int count=0;
     //StatementVisitor sv;
     
-    
+    //(visitor.targetPoint).getConditionPathV2();
    // uncomment the following code up to std python solver
     cout << "Vraiables found :" << AllTrackedVariables.size()<<"\n";
      //<< std::endl; 
@@ -95,7 +96,8 @@ public:
     // std::system("python solver.py");
      cout<<" visitStmt called : " <<visitStmtCall<<"\n"; 
 
-     (visitor.targetPoint).getConditionPathV2();
+   
+
   }
 
 
