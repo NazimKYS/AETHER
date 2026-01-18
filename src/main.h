@@ -165,7 +165,7 @@ RawPathCondition collectPathToTarget(const clang::FunctionDecl* func, const clan
 
 #include "PathCondition.h"
 
-#include "SsaAnalyzerAstVisitor.cpp"
+//#include "SsaAnalyzerAstVisitor.cpp"
 
 
 #endif

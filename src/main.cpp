@@ -229,9 +229,9 @@ unsigned int getTargetInstructionSourceLine(string targetJsonFile) {
 
 #include "MyASTConsumer.cpp" 
 
-#include "SsaAnalyzerAstVisitor.cpp" 
+/*#include "SsaAnalyzerAstVisitor.cpp" 
 
-#include "SsaAstConsumer.cpp" 
+#include "SsaAstConsumer.cpp" */
 
 #include "AggregateASTConsumer.cpp"
 
@@ -344,16 +344,16 @@ CI.getSourceManager().setMainFileID(mainFileID);
   Pass1Consumer TheConsumer0(SourceMgr, ReWr, Ctx);//new MySecASTConsumer(SourceMgr, ReWr, Ctx);
   Pass1Consumer* consumer0=&TheConsumer0;//new MySecASTConsumer(SourceMgr, ReWr, Ctx);
     
-  SsaASTConsumer TheConsumer2(SourceMgr, ReWr, Ctx);
-  SsaASTConsumer* consumer2Ssa=&TheConsumer2;
+  /*SsaASTConsumer TheConsumer2(SourceMgr, ReWr, Ctx);
+  SsaASTConsumer* consumer2Ssa=&TheConsumer2;*/
   AggregateASTConsumer astConsumers;
     // astConsumers.consumers.push_back(consumer0); //loop handling 
   
 
   //astConsumers.consumers.push_back(consumer3);
   astConsumers.consumers.push_back(consumer3);
-  astConsumers.consumers.push_back(consumer2Ssa);
-  astConsumers.consumers.push_back(consumer0);
+ // astConsumers.consumers.push_back(consumer2Ssa);
+  //astConsumers.consumers.push_back(consumer0);
 
  
 

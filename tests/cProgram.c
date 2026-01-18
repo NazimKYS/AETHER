@@ -24,7 +24,7 @@ void foo(char username[], char password[]) {
   uid_sid = (long)userId * serviceId;
   b=-5;
   if (uid_sid == 0) {      
-    serviceId = 0;
+    serviceId = 0; 
     readAndWriteService(uid_sid, serviceId);
     if(serviceId>35 ){ //  && <==> and 
         readOnly(uid_sid, serviceId); 
