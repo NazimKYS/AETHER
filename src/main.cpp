@@ -353,6 +353,8 @@ CI.getSourceManager().setMainFileID(mainFileID);
   //astConsumers.consumers.push_back(consumer3);
   astConsumers.consumers.push_back(consumer3);
   astConsumers.consumers.push_back(consumer2Ssa);
+  astConsumers.consumers.push_back(consumer0);
+
  
 
 

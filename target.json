@@ -4,6 +4,6 @@
     "uid_sid>0",
     "uid_sid<10000000000"
   ],
-  "dump": "main",
+  "dump": "foo",
   "desired_target": "_,_,_"
 }

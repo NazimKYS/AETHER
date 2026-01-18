@@ -150,9 +150,62 @@ void findParentStmt(const Stmt *s, bool allParentsFound) {
     }*/
 
   }
-  void printPathCondition(){
+  void printPathConditions() {
+    if (pathConditions.empty()) {
+        llvm::outs() << "No path conditions.\n";
+        return;
+    }
+
+    
+    for (size_t i = 0; i < pathConditions.size(); ++i) {
+        const auto& pc = pathConditions[i];
+        if(pc.isTrueBranch){ 
+           llvm::outs()  << "(" << pc.smtString << ") \n";
+        }else{
+          llvm::outs()  << "Not(" << pc.smtString << ") \n";
+        }
+        
+    }
+  } 
+
+  void exploreFunctionByStmt(){
+    
+    const FunctionDecl* func = parentFunctionOfProgramPoint;
+
+    if (!func || !func->hasBody()) {
+        return;
+    }
+    const Stmt* body = func->getBody();  // ← This is a Stmt*
+    // Now iterate over all child statements recursively
+    visitAllStmts(body);
+
+    //parentFunctionOfProgramPoint->dump();
     
   }
+  bool visitAllStmts(const Stmt* stmt) {
+    if (!stmt) return false;
+
+    // Check if this is the target
+    if (stmt->getID(*globalAstContext) == globalTargetStmt->getID(*globalAstContext)) {
+        llvm::outs() << "******* TARGET STMT FOUND — STOPPING \n";
+        return true; // signal: found!
+    }
+
+    // Process this statement
+    llvm::outs() << "Visiting: " << stmt->getStmtClassName() << "\n";
+
+    // Recurse into children — stop if any child finds the target
+    for (auto child = stmt->child_begin(); child != stmt->child_end(); ++child) {
+        if (visitAllStmts(*child)) {
+            return true; // propagate "found" upward
+        }
+    }
+
+    return false; // not found in this subtree
+}
+
+
+
   void findParentStmtOld(const Stmt *s, bool allParentsFound) {
     /*currentCallCounter++;
     logFile<<" starting findparent CALL COUNTER :# "<< currentCallCounter<<"\n";*/

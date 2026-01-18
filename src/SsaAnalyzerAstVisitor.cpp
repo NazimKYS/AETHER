@@ -1,13 +1,3 @@
-/*#include "clang/AST/RecursiveASTVisitor.h"
-#include "clang/AST/ASTContext.h"
-#include "clang/AST/Expr.h"
-#include "clang/AST/Stmt.h"
-#include <unordered_map>
-#include <vector>
-#include <string>
-#include <sstream>
-
-using namespace clang;*/
 #pragma once
 #include "main.h"
 

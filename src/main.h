@@ -133,7 +133,7 @@ void printAtomicVector(std::vector<AtomicElementOfConditionPath> listOfAtomicEle
 void trackVariables(Stmt *s) ;
 void trackDefOfVariables(BinaryOperator *BinOpStmt) ;
 
-     
+  
 
 void printVectorContent(vector<int64_t> v);
 
@@ -165,6 +165,7 @@ RawPathCondition collectPathToTarget(const clang::FunctionDecl* func, const clan
 
 #include "PathCondition.h"
 
+#include "SsaAnalyzerAstVisitor.cpp"
 
 
 #endif

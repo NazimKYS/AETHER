@@ -33,7 +33,7 @@ public:
 
     }
     NodeExpression(const Stmt *clangStmt,stack<NodeTool*> *myStack=nullptr ){
-        cout<<"NodeExpression cnstructor\n";
+        //out<<"NodeExpression cnstructor\n";
         //clangStmt->dump();
         dataNodeElement=clangStmt;
         if(myStack){
@@ -676,7 +676,7 @@ public:
       
       //sourceCFG->print(llvm::errs(), LangOptions(), true);
 
-       cout << "\n\n //////////// \n Starting exploreChildren 0 \n\n //////////// \n"  << endl;
+      cout << "\n\n //////////// \n Starting exploreChildren 0 \n\n //////////// \n"  << endl;
       exploreChildren(funcBody,0);
      
            
