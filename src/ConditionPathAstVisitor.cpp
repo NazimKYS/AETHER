@@ -32,7 +32,6 @@ public:
       // Expr* condition;
        //cout<<"currentLine "<<tragetStatementLocation.getSpellingLineNumber()<<"\n";    
 
-
       if (tragetStatementLocation.getSpellingLineNumber() ==
           sourceLineFromArg) {
         // globalTargetStmt = s;

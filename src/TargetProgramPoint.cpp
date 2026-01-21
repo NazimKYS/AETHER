@@ -9,23 +9,6 @@ struct SSAVariable {
     std::string ssaName() const { return name + "_" + std::to_string(version); }
 };
 
-// std::string rewriteWithSSA(const std::string& original, const std::vector<SSAVariable>& usedVars) {
-//     std::string rewritten = original;
-//     for (const auto& var : usedVars) {
-//         size_t pos = 0;
-//         while ((pos = rewritten.find(var.name, pos)) != std::string::npos) {
-//             bool prefixOK = (pos == 0 || !isalnum(rewritten[pos - 1]));
-//             bool suffixOK = (pos + var.name.size() >= rewritten.size() || !isalnum(rewritten[pos + var.name.size()]));
-//             if (prefixOK && suffixOK) {
-//                 rewritten.replace(pos, var.name.size(), var.ssaName());
-//                 pos += var.ssaName().size();
-//             } else {
-//                 pos += var.name.size();
-//             }
-//         }
-//     }
-//     return rewritten;
-// }
 
 
 std::string rewriteWithSSA(const std::string& original, const std::vector<SSAVariable>& usedVars) {
@@ -127,7 +110,7 @@ public:
         const clang::Expr* conditionExpr;
         bool isTrueBranch; // true = then, false = else
         std::string smtString; // optional: precomputed string
-    };
+  };
 
   std::vector<PathCondition> pathConditions; // ← NEW
 
@@ -271,11 +254,12 @@ void findParentStmt(const Stmt *s, bool allParentsFound) {
     
     for (size_t i = 0; i < pathConditions.size(); ++i) {
         const auto& pc = pathConditions[i];
-        if(pc.isTrueBranch){ 
+        llvm::outs()  << pc.smtString <<  "\n";
+        /*if(pc.isTrueBranch){ 
            llvm::outs()  << "(" << pc.smtString << ") \n";
         }else{
           llvm::outs()  << "Not(" << pc.smtString << ") \n";
-        }
+        }*/
         
     }
   } 
@@ -346,7 +330,6 @@ void findParentStmt(const Stmt *s, bool allParentsFound) {
         }
         return true;
     }
-    
     
 
     void collectUsedVars(Expr* expr, std::vector<SSAVariable>& out) {
@@ -425,7 +408,9 @@ void findParentStmt(const Stmt *s, bool allParentsFound) {
     // Process this statement
     //llvm::outs() << "Visiting: " << stmt->getStmtClassName() << "\n";
     if (stmt == globalTargetStmt) {
+
         llvm::outs() << "******* TARGET STMT FOUND — STOPPING \n";
+        printConditionStackTopToBottom(conditionStack);
         return true;
     }
 
@@ -458,7 +443,7 @@ void findParentStmt(const Stmt *s, bool allParentsFound) {
       varDefs[condVar.ssaName()] = condInfo;
 
       // Push current condition to stack
-      conditionStack.push(rewrittenCond);
+      //conditionStack.push(rewrittenCond);
       if (const Stmt* thenBody = ifStmt->getThen()) {
           conditionStack.push(rewrittenCond);           // positive condition
           if (visitAllStmts(thenBody)) return true;
@@ -475,8 +460,8 @@ void findParentStmt(const Stmt *s, bool allParentsFound) {
 
     }
     if(isa<BinaryOperator>(nonConstStmt)){
-      BinaryOperator *binOp = cast<BinaryOperator>(nonConstStmt);
-      VisitBinaryOperator(binOp);
+        BinaryOperator *binOp = cast<BinaryOperator>(nonConstStmt);
+        VisitBinaryOperator(binOp);
     }
     
     // Recurse into children — stop if any child finds the target
@@ -489,6 +474,20 @@ void findParentStmt(const Stmt *s, bool allParentsFound) {
     return false; // not found in this subtree
   }
 
+
+  void printConditionStackTopToBottom(std::stack<std::string>& stack) {
+    if (stack.empty()) {
+        llvm::outs() << "Condition stack: [empty]\n";
+        return;
+    }
+
+    std::stack<std::string> temp = stack;
+    llvm::outs() << "Current path conditions (most recent first):\n";
+    while (!temp.empty()) {
+        llvm::outs() << "  " << temp.top() << "\n";
+        temp.pop();
+    }
+  }
   void findParentStmtOld(const Stmt *s, bool allParentsFound) {
     /*currentCallCounter++;
     logFile<<" starting findparent CALL COUNTER :# "<< currentCallCounter<<"\n";*/

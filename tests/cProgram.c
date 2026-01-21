@@ -38,9 +38,6 @@ void foo(char username[], char password[]) {
   }else{c=a*(b+serviceId);
     writeOnly(uid_sid, serviceId);
   }
-  
-  
-  
   return;
 }
 
