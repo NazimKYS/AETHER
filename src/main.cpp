@@ -118,7 +118,7 @@ Stmt *globalScopeTargetStmt;
 
 
 
-#include "TargetProgramPoint.cpp"
+#include "TargetProgramPointV2.cpp"
 
 
 

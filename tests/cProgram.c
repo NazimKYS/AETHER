@@ -20,7 +20,7 @@ void foo(char username[], char password[]) {
   int a,b,c;//int serviceId=600,a,b,c;;
   //serviceId=64;// read(&serviceId); 1 <= serviceId <= 64
   long int uid_sid;
-  a=-999;
+  a=-999; 
   uid_sid = (long)userId * serviceId;
   b=-5;
   if (uid_sid == 0) {      
@@ -30,7 +30,7 @@ void foo(char username[], char password[]) {
         readOnly(uid_sid, serviceId); 
         serviceId=60;
     }else{b=18;  
-    serviceId=15;
+      serviceId=15;
       readAndWriteService(uid_sid, serviceId);
     }
   } else if(  userId<0  && (serviceId !=0 || userId>0)  ) {a=15;

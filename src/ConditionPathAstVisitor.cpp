@@ -24,11 +24,45 @@ public:
   bool VisitStmt(Stmt *s) {
     visitStmtCall++;
 
+    FullSourceLoc targetStatementLocation = astContext.getFullLoc(s->getBeginLoc());
+    
+    if (astContext.getSourceManager().isInMainFile(targetStatementLocation)) {
+        if (targetStatementLocation.getSpellingLineNumber() == sourceLineFromArg) {
+            
+            // ✅ KEY FIX: Only capture statements that are "complete" statements
+            // Filter out expressions that are just components of larger statements
+            
+            if (isa<BinaryOperator>(s) || 
+                isa<CallExpr>(s) || 
+                isa<DeclStmt>(s) || 
+                isa<IfStmt>(s) || 
+                isa<CompoundStmt>(s) ||
+                isa<ReturnStmt>(s)) {
+                
+                // This is a "real" statement, not just a sub-expression
+                globalScopeTargetStmt = s;
+                targetPoint = TargetProgramPoint(s, astContext);
+                
+                llvm::outs() << "TARGET FOUND: " << s->getStmtClassName() 
+                           << " at line " << sourceLineFromArg << "\n";
+                
+                // Don't return false here - we want to continue to find the best match
+                // But we'll handle this differently below
+            }
+            // Don't return early - let traversal continue to find better matches
+        }
+    }
+    return true;
+}
+/*  bool VisitStmt(Stmt *s) {
+    visitStmtCall++;
+
     FullSourceLoc tragetStatementLocation =
         astContext.getFullLoc(s->getBeginLoc());
    
+        
     if (astContext.getSourceManager().isInMainFile(tragetStatementLocation)) {
-
+        
       // Expr* condition;
        //cout<<"currentLine "<<tragetStatementLocation.getSpellingLineNumber()<<"\n";    
 
@@ -52,7 +86,7 @@ public:
     }
     
   }
-
+*/
   /*
 
   bool VisitFunctionDecl(FunctionDecl *f) {
