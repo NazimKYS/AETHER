@@ -379,38 +379,38 @@ public:
     }
 
     void findParentStmt(const Stmt *s, bool allParentsFound) {
-  if (allParentsFound) {
-    cout << "all parent found : " << vectorOfParentStmt.size() << "\n";
-  } else {
-    const Stmt *ST = s;
-    const auto &parents = globalAstContext->getParents(*ST);  // ← only call once
-
-    if (parents.empty()) {
-      llvm::errs() << "Can not find parent\n";
-      allParentsFound = true;
-    } else {
-      // FIXED: use 'parents', not a new temporary!
-      auto it = parents.begin();
-      llvm::outs() << "Current Node Kind: " << it->getNodeKind().asStringRef() << "\n";
-
-      if (it->getNodeKind().asStringRef() == "FunctionDecl") {
-        parentFunctionOfProgramPoint = parents[0].get<FunctionDecl>();
-      }
-
-      if (parents.size() == 1) {
-        ST = parents[0].get<Stmt>();
-        if (!ST) {
-          allParentsFound = true;
-          findParentStmt(ST, allParentsFound);
+        if (allParentsFound) {
+            cout << "all parent found : " << vectorOfParentStmt.size() << "\n";
         } else {
-          StmtAttributes parentStmt =
-              StmtAttributes(ST->getID(*globalAstContext), ST);
-          vectorOfParentStmt.push_back(parentStmt);
-          findParentStmt(ST, allParentsFound);
+            const Stmt *ST = s;
+            const auto &parents = globalAstContext->getParents(*ST);  // ← only call once
+
+            if (parents.empty()) {
+            llvm::errs() << "Can not find parent\n";
+            allParentsFound = true;
+            } else {
+            // FIXED: use 'parents', not a new temporary!
+            auto it = parents.begin();
+            llvm::outs() << "Current Node Kind: " << it->getNodeKind().asStringRef() << "\n";
+
+            if (it->getNodeKind().asStringRef() == "FunctionDecl") {
+                parentFunctionOfProgramPoint = parents[0].get<FunctionDecl>();
+            }
+
+            if (parents.size() == 1) {
+                ST = parents[0].get<Stmt>();
+                if (!ST) {
+                allParentsFound = true;
+                findParentStmt(ST, allParentsFound);
+                } else {
+                StmtAttributes parentStmt =
+                    StmtAttributes(ST->getID(*globalAstContext), ST);
+                vectorOfParentStmt.push_back(parentStmt);
+                findParentStmt(ST, allParentsFound);
+                }
+            }
+            }
         }
-      }
-    }
-  }
 }
 
     void getConditionPathV2() {
@@ -513,14 +513,19 @@ public:
             // Collect used variables (you'll need to pass current path state)
             std::vector<SSAVariable> usedVars;
             collectUsedVars(rhs, usedVars); // Update this later if needed
-
+            llvm::outs() << "DEBUG: For " << varName << ", usedVars: ";
+            for (const auto& used : usedVars) {
+                llvm::outs() << used.name << " ";
+            }
+            llvm::outs() << "\n";
             // Create substituted RHS string
             std::string rawRHS;
             llvm::raw_string_ostream ss(rawRHS);
-            rhs->printPretty(ss, nullptr, globalAstContext->getPrintingPolicy());
+            rhs->printPretty(ss, nullptr, globalAstContext->getPrintingPolicy()); //str definition
             ss.flush();
 
             std::string substituted = ss.str();
+            //substitute varibales names with their ssa version in definition expression, can be optimized
             for (const auto& used : usedVars) {
                 std::string orig = used.name; // Use baseName now
                 std::string versioned = used.ssaName();
@@ -655,21 +660,50 @@ public:
             llvm::outs() << "\n=== Building SMT Context ===\n";
             SMTTargetContext smtContext = buildSMTContext();
             printSMTContext(smtContext);
-            
-            // ✅ USE THE NEW FUNCTION INSTEAD
-            SSAVarInfo info = getSSAVarInfoFromVarDefs("serviceId_0");
-            if (info.found) {
-                llvm::outs() << "Base name: " << info.baseName << "\n";
-                llvm::outs() << "Version: " << info.version << "\n";
-                llvm::outs() << "Expression: " << info.exprString << "\n";
+            llvm::outs() << "\n=== Detailed Variable Information ===\n";
+            for (const auto& ssaName : smtContext.relevantVariables) {
+                if (!ssaName.empty()) {
+                    llvm::outs() << "Variable: " << ssaName << "\n";
+                    
+                    SSAVarInfo info = getSSAVarInfoFromVarDefs(ssaName);
+                    if (info.found) {
+                        llvm::outs() << "  Base name: " << info.baseName << "\n";
+                        llvm::outs() << "  Version: " << info.version << "\n";
+                        llvm::outs() << "  Expression: " << info.exprString << "\n";
+                        
+                        // Optional: print path conditions
+                        if (!info.pathConditions.empty()) {
+                            llvm::outs() << "  Path conditions:\n";
+                            for (const auto& cond : info.pathConditions) {
+                                llvm::outs() << "    " << cond << "\n";
+                            }
+                        }
+                    } else {
+                        llvm::outs() << "  NOT FOUND in varDefs\n";
+                    }
+                    llvm::outs() << "\n";
+                }
             }
+
+            // llvm::outs() << "\n=== Building SMT Context ===\n";
+            // SMTTargetContext smtContext = buildSMTContext();
+            // printSMTContext(smtContext);
             
-            // Print variable history (this works fine)
-            printVariableHistory();
+            // // ✅ USE THE NEW FUNCTION INSTEAD
+            // SSAVarInfo info = getSSAVarInfoFromVarDefs("serviceId_0");
+            // if (info.found) {
+            //     llvm::outs() << "Base name: " << info.baseName << "\n";
+            //     llvm::outs() << "Version: " << info.version << "\n";
+            //     llvm::outs() << "Expression: " << info.exprString << "\n";
+            // }
+            
+            // // Print variable history (this works fine)
+            // printVariableHistory();
         } else {
             llvm::errs() << "Target statement not found!\n";
         }  
-        
+        cout<< "!!! printing variable history \n";
+        printVariableHistory();
 
     }
 
@@ -678,6 +712,12 @@ public:
     if (!stmt) return false;
 
     if (stmt == globalTargetStmt) {
+         if (isa<BinaryOperator>(stmt)) {
+            BinaryOperator* binOp = const_cast<BinaryOperator*>(cast<BinaryOperator>(stmt));
+            VisitBinaryOperator(binOp, stmt);
+        }
+        // Add other statement types as needed (CallExpr, etc.)
+        
         llvm::outs() << "******* TARGET STMT FOUND — STOPPING \n";
         printConditionStackTopToBottom(conditionStack);
         targetFound = true;
@@ -801,67 +841,43 @@ private:
 
     void extractVariablesFromExpr(const clang::Expr* expr, std::vector<std::string>& vars) const {
 
-        if (!expr) return;
-        
-        // Handle DeclRefExpr (direct variable reference)
-        if (const auto* dre = dyn_cast<clang::DeclRefExpr>(expr)) {
-            std::string name = dre->getNameInfo().getAsString();
-            if (!name.empty()) {
-                // Check if this is an SSA name (has _digits suffix)
-                size_t lastUnderscore = name.find_last_of('_');
-                if (lastUnderscore != std::string::npos && 
-                    lastUnderscore > 0 && 
-                    lastUnderscore < name.length() - 1) {
-                    
-                    std::string suffix = name.substr(lastUnderscore + 1);
-                    bool isAllDigits = true;
-                    for (char c : suffix) {
-                        if (!std::isdigit(c)) {
-                            isAllDigits = false;
-                            break;
-                        }
-                    }
-                    
-                    if (isAllDigits) {
-                        // Extract base name
-                        std::string baseName = name.substr(0, lastUnderscore);
-                        if (!baseName.empty()) {
-                            vars.push_back(baseName);
-                        }
-                    } else {
-                        vars.push_back(name);
-                    }
-                } else {
-                    vars.push_back(name);
+       if (!expr) return;
+    
+    if (const auto* dre = dyn_cast<clang::DeclRefExpr>(expr)) {
+        std::string name = dre->getNameInfo().getAsString();
+        if (!name.empty()) {
+            // Extract base name from SSA name if needed
+            size_t lastUnderscore = name.find_last_of('_');
+            if (lastUnderscore != std::string::npos && lastUnderscore > 0) {
+                std::string suffix = name.substr(lastUnderscore + 1);
+                if (!suffix.empty() && std::all_of(suffix.begin(), suffix.end(), ::isdigit)) {
+                    name = name.substr(0, lastUnderscore);
                 }
             }
-            return;
+            vars.push_back(name);
         }
-        
-        // Handle ImplicitCastExpr (very common wrapper in Clang AST)
-        if (const auto* ice = dyn_cast<clang::ImplicitCastExpr>(expr)) {
-            extractVariablesFromExpr(ice->getSubExpr(), vars);
-            return;
+        return;
+    }
+    
+    // Handle binary operators (like multiplication)
+    if (const auto* binOp = dyn_cast<clang::BinaryOperator>(expr)) {
+        extractVariablesFromExpr(binOp->getLHS(), vars);
+        extractVariablesFromExpr(binOp->getRHS(), vars);
+        return;
+    }
+    
+    // Handle casts
+    if (const auto* ice = dyn_cast<clang::ImplicitCastExpr>(expr)) {
+        extractVariablesFromExpr(ice->getSubExpr(), vars);
+        return;
+    }
+    
+    // Handle other common expressions
+    for (const auto* child : expr->children()) {
+        if (const auto* childExpr = dyn_cast_or_null<clang::Expr>(child)) {
+            extractVariablesFromExpr(childExpr, vars);
         }
-        
-        // Handle CStyleCastExpr
-        if (const auto* cce = dyn_cast<clang::CStyleCastExpr>(expr)) {
-            extractVariablesFromExpr(cce->getSubExpr(), vars);
-            return;
-        }
-        
-        // Handle ParenExpr (parentheses)
-        if (const auto* pe = dyn_cast<clang::ParenExpr>(expr)) {
-            extractVariablesFromExpr(pe->getSubExpr(), vars);
-            return;
-        }
-        
-        // Recurse into children for complex expressions
-        for (const auto* child : expr->children()) {
-            if (const auto* childExpr = dyn_cast_or_null<clang::Expr>(child)) {
-                extractVariablesFromExpr(childExpr, vars);
-            }
-        }
+    }
 }
 
 
@@ -911,96 +927,188 @@ private:
 }
 
 
-    std::set<std::string> computeRelevantVariablesUsingSymtab() const {
-    std::set<std::string> relevant;
-    
-    // Add target variables (base names)
-    if (const auto* binOp = dyn_cast<clang::BinaryOperator>(globalTargetStmt)) {
-        if (binOp->isAssignmentOp()) {
-            if (const auto* lhs = dyn_cast<clang::DeclRefExpr>(binOp->getLHS())) {
-                std::string name = lhs->getNameInfo().getAsString();
-                if (!name.empty()) {
-                    relevant.insert(name);
+    std::set<std::string> computeRelevantVariablesWithSSANames() const {
+        std::set<std::string> relevantSSANames;
+        
+        // STEP 1: Extract variables from target statement and get their current SSA versions
+        if (const auto* binOp = dyn_cast<clang::BinaryOperator>(globalTargetStmt)) {
+            if (binOp->isAssignmentOp()) {
+                // Get LHS variable
+                if (const auto* lhs = dyn_cast<clang::DeclRefExpr>(binOp->getLHS())) {
+                    std::string targetBaseName = lhs->getNameInfo().getAsString();
+                    std::string targetSSA = findLatestSSAName(targetBaseName);
+                    if (!targetSSA.empty()) {
+                        relevantSSANames.insert(targetSSA);
+                    }
+                }
+                
+                // Get RHS variables  
+                std::vector<std::string> rhsVars;
+                extractVariablesFromExpr(binOp->getRHS(), rhsVars);
+                for (const auto& rhsBaseName : rhsVars) {
+                    std::string rhsSSA = findLatestSSAName(rhsBaseName);
+                    if (!rhsSSA.empty()) {
+                        relevantSSANames.insert(rhsSSA);
+                    }
                 }
             }
         }
-    }
-    
-    // Add variables from path conditions
-    std::vector<std::string> pathVars = extractBaseNamesFromPathConditions();
-    for (const auto& var : pathVars) {
-        if (!var.empty()) {
-            relevant.insert(var);
+        
+        // STEP 2: Add variables from path conditions
+        std::vector<std::string> pathSSANames = extractSSANamesFromPathConditions();
+        for (const auto& ssaName : pathSSANames) {
+            if (!ssaName.empty()) {
+                relevantSSANames.insert(ssaName);
+            }
         }
-    }
-    
-    // Transitive closure using symbol table
-    bool changed = true;
-    int iteration = 0;
-    const int MAX_ITERATIONS = 10; // ⚠️ Reduce this to prevent memory explosion
-    
-    while (changed && iteration < MAX_ITERATIONS) {
-        changed = false;
-        iteration++;
         
-        // Create a snapshot of current relevant variables
-        std::vector<std::string> current(relevant.begin(), relevant.end());
+        // STEP 3: Fixed-point iteration - for each variable in set, add its used variables
+        bool changed = true;
+        int iteration = 0;
+        const int MAX_ITERATIONS = 10;
         
-        for (const auto& var : current) {
-            if (var.empty()) continue;
+        while (changed && iteration < MAX_ITERATIONS) {
+            changed = false;
+            iteration++;
             
-            const SSAVariable* def = symtab.getLatestDefinition(var);
-            if (def && def->definingExpr) {
-                std::vector<std::string> rhsVars;
-                extractVariablesFromExpr(def->definingExpr, rhsVars);
-                
-                for (const auto& rhsVar : rhsVars) {
-                    if (!rhsVar.empty()) {
-                        // Only add if it's not already in the set
-                        if (relevant.find(rhsVar) == relevant.end()) {
-                            relevant.insert(rhsVar);
-                            changed = true;
+            // Create snapshot of current set
+            std::vector<std::string> current(relevantSSANames.begin(), relevantSSANames.end());
+            
+            for (const auto& ssaName : current) {
+                // Look up definition in varDefs
+                auto it = varDefs.find(ssaName);
+                if (it != varDefs.end()) {
+                    const DefinitionInfo& def = it->second;
+                    
+                    // METHOD A: Use stored usedVars (if they're correct)
+                    for (const auto& usedVar : def.usedVars) {
+                        std::string usedSSA = findLatestSSAName(usedVar.name);
+                        if (!usedSSA.empty()) {
+                            if (relevantSSANames.insert(usedSSA).second) {
+                                changed = true;
+                            }
+                        }
+                    }
+                    
+                    // METHOD B: Extract directly from definingExpr (more reliable)
+                    if (def.definingExpr) {
+                        std::vector<std::string> extractedVars;
+                        extractVariablesFromExpr(def.definingExpr, extractedVars);
+                        for (const auto& baseName : extractedVars) {
+                            std::string extractedSSA = findLatestSSAName(baseName);
+                            if (!extractedSSA.empty()) {
+                                if (relevantSSANames.insert(extractedSSA).second) {
+                                    changed = true;
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+        
+        return relevantSSANames;
     }
-    
-    if (iteration >= MAX_ITERATIONS) {
-        llvm::outs() << "WARNING: Reached maximum iterations in backward analysis\n";
-    }
-    
-    return relevant;
-}
-    /*llvm::outs() << "DEBUG: Final relevant variables: ";
-    for (const auto& var : relevant) {
-        if (!var.empty()) {
-            llvm::outs() << "'" << var << "' ";
-        }
-    }
-    llvm::outs() << "\n";
-    std::set<std::string> validated;
-    for (const auto& var : relevant) {
-        if (!var.empty() && var.length() < 1000) { // reasonable length check
-            validated.insert(var);
-        }
-    }
-    return validated;
-    
 
-}*/
-
-    std::string getBaseNameFromSSA(const std::string& ssaName) const {
-    size_t pos = ssaName.find('_');
-    if (pos != std::string::npos && pos > 0) {
-        std::string suffix = ssaName.substr(pos + 1);
-        if (!suffix.empty() && std::all_of(suffix.begin(), suffix.end(), ::isdigit)) {
-            return ssaName.substr(0, pos);
+    std::vector<std::string> extractSSANamesFromPathConditions() const {
+        std::vector<std::string> ssaNames;
+        
+        std::stack<std::string> tempStack = conditionStack;
+        while (!tempStack.empty()) {
+            std::string cond = tempStack.top();
+            
+            if (!cond.empty()) {
+                size_t start = 0;
+                while (start < cond.length()) {
+                    if (std::isalpha(cond[start]) || cond[start] == '_') {
+                        size_t end = start;
+                        while (end < cond.length() && 
+                            (std::isalnum(cond[end]) || cond[end] == '_')) {
+                            end++;
+                        }
+                        
+                        if (end > start) {
+                            std::string token = cond.substr(start, end - start);
+                            
+                            // Check if it's an SSA name (has _digits suffix)
+                            size_t lastUnderscore = token.find_last_of('_');
+                            if (lastUnderscore != std::string::npos && 
+                                lastUnderscore > 0 && 
+                                lastUnderscore < token.length() - 1) {
+                                
+                                std::string suffix = token.substr(lastUnderscore + 1);
+                                bool isAllDigits = true;
+                                for (char c : suffix) {
+                                    if (!std::isdigit(c)) {
+                                        isAllDigits = false;
+                                        break;
+                                    }
+                                }
+                                
+                                if (isAllDigits) {
+                                    ssaNames.push_back(token);
+                                }
+                            }
+                        }
+                        start = end;
+                    } else {
+                        start++;
+                    }
+                }
+            }
+            tempStack.pop();
         }
+        
+        // Remove duplicates
+        if (!ssaNames.empty()) {
+            std::sort(ssaNames.begin(), ssaNames.end());
+            auto last = std::unique(ssaNames.begin(), ssaNames.end());
+            ssaNames.erase(last, ssaNames.end());
+        }
+        
+        return ssaNames;
     }
-    return ssaName; // not an SSA name
-}
+
+    
+        std::string getBaseNameFromSSA(const std::string& ssaName) const {
+        if (ssaName.empty()) return ssaName;
+        
+        size_t lastUnderscore = ssaName.find_last_of('_');
+        if (lastUnderscore == std::string::npos || lastUnderscore == 0 || 
+            lastUnderscore >= ssaName.length() - 1) {
+            return ssaName;
+        }
+        
+        std::string suffix = ssaName.substr(lastUnderscore + 1);
+        bool isAllDigits = true;
+        for (char c : suffix) {
+            if (!std::isdigit(c)) {
+                isAllDigits = false;
+                break;
+            }
+        }
+        
+        if (isAllDigits) {
+            return ssaName.substr(0, lastUnderscore);
+        }
+        return ssaName;
+    }
+    std::string findLatestSSAName(const std::string& baseName) const {
+        int maxVersion = -1;
+        std::string latestSSA = "";
+        
+        for (const auto& [ssaName, def] : varDefs) {
+            if (def.ssaVar.name == baseName) {
+                if (def.ssaVar.version > maxVersion) {
+                    maxVersion = def.ssaVar.version;
+                    latestSSA = ssaName;
+                }
+            }
+        }
+        
+        return latestSSA;
+    }
+   
 
     SMTTargetContext buildSMTContext() const {
     SMTTargetContext context;
@@ -1083,10 +1191,10 @@ private:
     }
     
     // Compute relevant variables
-    context.relevantVariables = computeRelevantVariablesUsingSymtab();
+    
     
     llvm::outs() << "DEBUG: About to compute relevant variables\n";
-    context.relevantVariables = computeRelevantVariablesUsingSymtab();
+    context.relevantVariables =  computeRelevantVariablesWithSSANames();//computeRelevantVariablesUsingSymtab();
     llvm::outs() << "DEBUG: Finished computing relevant variables\n";
     
     return context;
