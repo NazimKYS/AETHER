@@ -1,7 +1,7 @@
 #pragma once
 #include "main.h"
 
-
+int getCurrentSsaVersionOfVariable(string baseName);
 
 // Replace your current SSAVariable struct with this
 struct SSAVariable {
@@ -17,9 +17,13 @@ struct SSAVariable {
         return name + "_" + std::to_string(version); 
     }
     
+    //need to create default constructor for cond variables
     // Add default constructor (required for unordered_map)
+    SSAVariable(const std::string& n) : name(n) {
+        int currentVerionsIfexists = getCurrentSsaVersionOfVariable(n);
+        version=currentVerionsIfexists+1;
+    }
     SSAVariable() : version(0) {}
-    
     // Constructor for existing code
     SSAVariable(const std::string& n, int v) : name(n), version(v) {}
     
@@ -27,55 +31,20 @@ struct SSAVariable {
     SSAVariable(const std::string& n, int v, const std::string& expr, 
                 const clang::Expr* defExpr = nullptr) 
         : name(n), version(v), exprString(expr), definingExpr(defExpr) {}
-};
-
-
-
-std::string rewriteWithSSA(const std::string& original, const std::vector<SSAVariable>& usedVars) {
-    std::string rewritten = original;
-
-    // Sort variables by length (longest first) to avoid partial matches
-    std::vector<SSAVariable> sortedVars = usedVars;
-    std::sort(sortedVars.begin(), sortedVars.end(),
-        [](const SSAVariable& a, const SSAVariable& b) {
-            return a.name.size() > b.name.size();
-        });
-
-    for (const auto& var : sortedVars) {
-        const std::string& origName = var.name;
-        const std::string& ssaName = var.ssaName();
-        size_t pos = 0;
-        while ((pos = rewritten.find(origName, pos)) != std::string::npos) {
-            // Check left boundary: must be start or non-alnum
-            bool leftOK = (pos == 0 || !isalnum(static_cast<unsigned char>(rewritten[pos - 1])));
-
-            // Check right boundary: must be end or non-alnum
-            size_t endPos = pos + origName.size();
-            bool rightOK = (endPos >= rewritten.size() || 
-                           !isalnum(static_cast<unsigned char>(rewritten[endPos])));
-
-            // 🔑 CRITICAL: Also ensure it's not part of an existing SSA name like "userId_0"
-            if (leftOK && rightOK) {
-                // Look ahead: if followed by '_' and digit, it's already renamed → skip
-                if (endPos < rewritten.size() && rewritten[endPos] == '_') {
-                    size_t afterUnderscore = endPos + 1;
-                    if (afterUnderscore < rewritten.size() && isdigit(static_cast<unsigned char>(rewritten[afterUnderscore]))) {
-                        // This is likely an existing SSA name (e.g., userId_0), so skip
-                        pos = endPos;
-                        continue;
-                    }
-                }
-
-                // Safe to replace
-                rewritten.replace(pos, origName.size(), ssaName);
-                pos += ssaName.size(); // move past the replacement
-            } else {
-                pos = endPos;
-            }
-        }
+    
+    SSAVariable(const std::string& varName,
+                const std::string& exprStr,  // Renamed to avoid shadowing
+                const clang::Expr* defExpr = nullptr,
+                const std::vector<std::string>& pathConds = {})
+        : name(varName),
+          version(getCurrentSsaVersionOfVariable(varName) + 1),
+          exprString(exprStr),      // No shadowing ambiguity
+          definingExpr(defExpr),
+          pathConditions(pathConds)
+    {
+        // Constructor body can stay empty (all members initialized above)
     }
-    return rewritten;
-}
+};
 
 
 // Structure to hold definition info
@@ -117,7 +86,7 @@ struct DefinitionInfo {
     unsigned line;
     unsigned stmtID;
     std::string exprString;
-    std::vector<SSAVariable> usedVars;
+    std::vector<std::string> usedVars;
     std::vector<std::string> conditionContext;
     
     // NEW: Store original AST nodes for SMT generation
@@ -127,217 +96,76 @@ struct DefinitionInfo {
 };
 
 
-class SSASymbolTable {
-    std::unordered_map<std::string, int> currentVersion;
-    std::unordered_map<std::string, std::vector<SSAVariable>> versionHistory;
+//make it global
+std::unordered_map<std::string, DefinitionInfo> varDefs;
 
-public:
-    SSAVariable define(const std::string& name) {
-        int& version = currentVersion[name];
-        SSAVariable ssaVar = {name, version++};
-        versionHistory[name].push_back(ssaVar);
-        return ssaVar;
-    }
-
-    SSAVariable latest(const std::string& name) const {
-        auto it = versionHistory.find(name);
-        if (it == versionHistory.end() || it->second.empty())
-            return {name, 0}; // fallback
-        return it->second.back();
-    }
-
-    const std::vector<SSAVariable>& history(const std::string& name) const {
-        return versionHistory.at(name);
-    }
-    std::unordered_map<std::string, int> save() const {
-        return currentVersion; // copy current state
-    }
-    std::unordered_map<std::string, SSAVariable> getCurrentState() const {
-      std::unordered_map<std::string, SSAVariable> state;
-      for (const auto& [name, history] : versionHistory) {
-          if (!history.empty()) {
-              state[name] = history.back();
-          }
-      }
-      return state;
-    }
-
-    // 🔑 NEW: Restore version state
-    void restore(const std::unordered_map<std::string, SSAVariable>& state) {
-      currentVersion.clear();
-      versionHistory.clear();
-      
-      for (const auto& [name, var] : state) {
-          currentVersion[name] = var.version;
-          versionHistory[name] = {var}; // simplified - you might want full history
-      }
-    }
-
-    const std::unordered_map<std::string, std::vector<SSAVariable>>& getAll() const {
-        return versionHistory;
-    }
-    // In SSASymbolTable class
-
-
-// Add this method to SSASymbolTable
-    std::vector<SSAVariable> getAllDefinitions(const std::string& baseName) const {
-        auto it = versionHistory.find(baseName);
-        if (it != versionHistory.end()) {
-            return it->second; // assuming versionHistory stores VariableDefinition
-        }
-        return {};
-    }
-
-// Get latest definition
-    const SSAVariable* getLatestDefinition(const std::string& baseName) const {
-    auto defs = getAllDefinitions(baseName);
-    if (!defs.empty()) {
-        return &defs.back();
-    }
-    return nullptr;
-}
-
-// Add this method to your SSASymbolTable class
-    SSAVariable defineWithDefinition(const std::string& varName, const std::string& exprString,  const clang::Expr* definingExpr = nullptr,  const std::vector<std::string>& pathConditions = {}) {
-
-    SSAVariable newVar = define(varName);
-    // Update the last definition with extra info
-    if (!versionHistory[varName].empty()) {
-        auto& lastDef = versionHistory[varName].back();
-        lastDef.exprString = exprString;
-        lastDef.definingExpr = definingExpr;
-        lastDef.pathConditions = pathConditions;
-    }
-    return newVar;
-}
-
-
-    void printSymbolTable() const {
-    llvm::outs() << "\n=== Symbol Table Content ===\n";
-    if (versionHistory.empty()) {
-        llvm::outs() << "(empty)\n";
-        return;
-    }
-    
-    for (const auto& [varName, definitions] : versionHistory) {
-        llvm::outs() << "Variable: " << varName << "\n";
-        for (size_t i = 0; i < definitions.size(); ++i) {
-            const auto& def = definitions[i];
-            llvm::outs() << "  Version " << def.version << " (" << def.ssaName() << "):\n";
-            llvm::outs() << "    Expression: " << def.exprString << "\n";
-            if (!def.pathConditions.empty()) {
-                llvm::outs() << "    Path conditions:\n";
-                for (const auto& cond : def.pathConditions) {
-                    llvm::outs() << "      " << cond << "\n";
+int getCurrentSsaVersionOfVariable(string baseName){
+    int currentVersion=-1;
+    std::string latestSSA = "";
+        
+        for (const auto& [ssaName, def] : varDefs) {
+            if (def.ssaVar.name == baseName) {
+                if (def.ssaVar.version > currentVersion) {
+                    currentVersion = def.ssaVar.version;
+                    latestSSA = ssaName;
                 }
+            }
+        }
+        return currentVersion;
+}
+
+
+
+std::string rewriteWithSSA(const std::string& original, const std::vector<std::string>& usedVars) {
+    std::string rewritten = original;
+    std::vector<SSAVariable> sortedVars ={};
+    // Sort variables by length (longest first) to avoid partial matches
+    // getSSAvariable from symbol table using ssaVarName:
+    for (const auto& var : usedVars) {
+        auto it = varDefs.find(var);
+        if (it != varDefs.end()) {
+            const DefinitionInfo& def = it->second;
+            sortedVars.push_back(def.ssaVar);
+        }
+
+    
+    }    
+      
+    for (const auto& var : sortedVars) {
+        const std::string& origName = var.name;
+        const std::string& ssaName = var.ssaName();
+        size_t pos = 0;
+        while ((pos = rewritten.find(origName, pos)) != std::string::npos) {
+            // Check left boundary: must be start or non-alnum
+            bool leftOK = (pos == 0 || !isalnum(static_cast<unsigned char>(rewritten[pos - 1])));
+
+            // Check right boundary: must be end or non-alnum
+            size_t endPos = pos + origName.size();
+            bool rightOK = (endPos >= rewritten.size() || 
+                           !isalnum(static_cast<unsigned char>(rewritten[endPos])));
+
+            // 🔑 CRITICAL: Also ensure it's not part of an existing SSA name like "userId_0"
+            if (leftOK && rightOK) {
+                // Look ahead: if followed by '_' and digit, it's already renamed → skip
+                if (endPos < rewritten.size() && rewritten[endPos] == '_') {
+                    size_t afterUnderscore = endPos + 1;
+                    if (afterUnderscore < rewritten.size() && isdigit(static_cast<unsigned char>(rewritten[afterUnderscore]))) {
+                        // This is likely an existing SSA name (e.g., userId_0), so skip
+                        pos = endPos;
+                        continue;
+                    }
+                }
+
+                // Safe to replace
+                rewritten.replace(pos, origName.size(), ssaName);
+                pos += ssaName.size(); // move past the replacement
             } else {
-                llvm::outs() << "    Path conditions: (none)\n";
+                pos = endPos;
             }
-            llvm::outs() << "    Has definingExpr: " << (def.definingExpr ? "yes" : "no") << "\n";
         }
     }
-    llvm::outs() << "===========================\n\n";
+    return rewritten;
 }
-
-    const SSAVariable* getDefinitionBySSAName(const std::string& ssaName) const {
-        // Handle empty string
-        if (ssaName.empty()) {
-            return nullptr;
-        }
-        
-        // Find the last underscore by manual search
-        size_t lastUnderscore = std::string::npos;
-        for (size_t i = ssaName.length(); i > 0; --i) {
-            if (ssaName[i - 1] == '_') {
-                lastUnderscore = i - 1;
-                break;
-            }
-        }
-        
-        // Must have at least one underscore and it can't be at the beginning
-        if (lastUnderscore == std::string::npos || lastUnderscore == 0) {
-            return nullptr;
-        }
-        
-        // Extract the suffix after the last underscore
-        if (lastUnderscore + 1 >= ssaName.length()) {
-            return nullptr;
-        }
-        
-        std::string suffix = ssaName.substr(lastUnderscore + 1);
-        
-        // Suffix must be non-empty and contain only digits
-        if (suffix.empty()) {
-            return nullptr;
-        }
-        
-        bool isAllDigits = true;
-        for (char c : suffix) {
-            if (!std::isdigit(c)) {
-                isAllDigits = false;
-                break;
-            }
-        }
-        
-        if (!isAllDigits) {
-            return nullptr;
-        }
-        
-        // Extract base name (everything before the last underscore)
-        std::string baseName = ssaName.substr(0, lastUnderscore);
-        if (baseName.empty()) {
-            return nullptr;
-        }
-        
-        // Convert version string to integer manually (no exceptions)
-        int version = 0;
-        int multiplier = 1;
-        
-        // Convert from right to left
-        for (int i = static_cast<int>(suffix.length()) - 1; i >= 0; --i) {
-            version += (suffix[i] - '0') * multiplier;
-            multiplier *= 10;
-        }
-        
-        // Look up all definitions for this base name
-        const auto& defs = getAllDefinitions(baseName);
-        
-        // Find the definition with matching version
-        for (const auto& def : defs) {
-            if (def.version == version) {
-                return &def;
-            }
-        }
-        
-        // Not found
-        return nullptr;
-}
-/*void clear() {
-    versionHistory.clear();
-    currentVersion.clear();
-}
-*/
-
-// Get complete definition info by SSA name
-    SSAVarInfo getSSAVarInfo(const std::string& ssaName) const {
-    SSAVarInfo info;
-    
-    const SSAVariable* def = getDefinitionBySSAName(ssaName);
-    if (!def) {
-        return info;
-    }
-    
-    info.found = true;
-    info.baseName = def->name;
-    info.version = def->version;
-    info.exprString = def->exprString;
-    info.definingExpr = def->definingExpr;
-    info.pathConditions = def->pathConditions;
-    
-    return info;
-}
-};
-
 
 
 
@@ -346,10 +174,10 @@ public:
 class TargetProgramPoint {
     
 private:
-    SSASymbolTable symtab;
+    //SSASymbolTable symtab;
     std::unordered_map<unsigned, std::vector<DefinitionInfo>> lineToDefinitions;
-    std::unordered_map<std::string, DefinitionInfo> varDefs;
-    std::unordered_map<std::string, DefinitionInfo> ssaVarDefsMap;
+    // make it global // std::unordered_map<std::string, DefinitionInfo> varDefs;
+    
 
     std::stack<std::string> conditionStack;  
 public:
@@ -513,11 +341,11 @@ public:
             std::string varName = declRef->getNameInfo().getAsString();
 
             // Collect used variables (you'll need to pass current path state)
-            std::vector<SSAVariable> usedVars;
-            collectUsedVars(rhs, usedVars); // Update this later if needed
+            std::vector<string> usedVars;
+            collectUsedVars(rhs, usedVars); // heere we have  Update this later if needed
             llvm::outs() << "DEBUG: For " << varName << ", usedVars: ";
             for (const auto& used : usedVars) {
-                llvm::outs() << used.name << " ";
+                llvm::outs() << used << " ";
             }
             llvm::outs() << "\n";
             // Create substituted RHS string
@@ -528,7 +356,19 @@ public:
 
             std::string substituted = ss.str();
             //substitute varibales names with their ssa version in definition expression, can be optimized
-            for (const auto& used : usedVars) {
+            std::vector<SSAVariable> usedSsaVars ={};
+            // Sort variables by length (longest first) to avoid partial matches
+            // getSSAvariable from symbol table using ssaVarName:
+            for (const auto& var : usedVars) {
+                auto it = varDefs.find(var);
+                if (it != varDefs.end()) {
+                    const DefinitionInfo& def = it->second;
+                    usedSsaVars.push_back(def.ssaVar);
+                }
+
+            
+            } 
+            for (const auto& used : usedSsaVars) {
                 std::string orig = used.name; // Use baseName now
                 std::string versioned = used.ssaName();
                 size_t pos = 0;
@@ -553,7 +393,13 @@ public:
             }
 
             // ✅ USE ENHANCED SYMBOL TABLE
-            SSAVariable newDef = symtab.defineWithDefinition(
+            /*SSAVariable newDef = symtab.defineWithDefinition(
+                varName, 
+                substituted, 
+                rhs, 
+                currentPathConditions
+            );*/
+            SSAVariable newDef(
                 varName, 
                 substituted, 
                 rhs, 
@@ -579,15 +425,14 @@ public:
             };
             lineToDefinitions[line].push_back(info);
             varDefs[newDef.ssaName()] = info;
-            ssaVarDefsMap[newDef.ssaName()] = info;
-
+            
 
         }
     }
     return true;
 }
   
-    void collectUsedVars(Expr* expr, std::vector<SSAVariable>& out) {
+    void collectUsedVars(Expr* expr, std::vector<std::string>& out) {
         if (!expr) return;
 
         if (DeclRefExpr* declRef = dyn_cast<DeclRefExpr>(expr)) {
@@ -643,10 +488,7 @@ public:
         }
     }
 
-    void printCurrentSymbolTable() const {
-        llvm::outs() << "\n=== Current Symbol Table at Target ===\n";
-        symtab.printSymbolTable();
-    }
+ 
 
     void exploreFunctionByStmt() {
         const FunctionDecl* func = parentFunctionOfProgramPoint;
@@ -655,14 +497,14 @@ public:
         }
         
         const Stmt* body = func->getBody();
-        body->dump();
+        //body->dump();
         // Reset state before traversal
         targetFound = false;
         
         // Perform traversal
         bool found = visitAllStmts(body);
         
-      /*  if (found) {
+        if (found) {
             llvm::outs() << "\n=== Building SMT Context ===\n";
             SMTTargetContext smtContext = buildSMTContext();
             printSMTContext(smtContext);
@@ -707,11 +549,10 @@ public:
             // printVariableHistory();
         } else {
             llvm::errs() << "Target statement not found!\n";
-        } */ 
+        } 
         cout<< "!!! printing variable history \n";
         printVariableHistory();
 
-        cout<< varDefs.find("serviceId_1");
 
     }
 
@@ -736,7 +577,7 @@ public:
         IfStmt* ifStmt = const_cast<IfStmt*>(cast<IfStmt>(stmt));
         Expr* condExpr = ifStmt->getCond();
         
-        std::vector<SSAVariable> usedVars;
+        std::vector<string> usedVars;
         collectUsedVars(condExpr, usedVars); //extract variables used from condExpression in list usedVars
 
         std::string condText;
@@ -744,7 +585,7 @@ public:
         condExpr->printPretty(ss, nullptr, globalAstContext->getPrintingPolicy());
         std::string rewrittenCond = rewriteWithSSA(ss.str(), usedVars);
 
-        SSAVariable condVar = symtab.define("cond");
+        SSAVariable condVar("cond");//symtab.define("cond");
         FullSourceLoc fullLoc = globalAstContext->getFullLoc(ifStmt->getIfLoc());
         unsigned line = fullLoc.getSpellingLineNumber();
         unsigned stmtID = reinterpret_cast<uintptr_t>(ifStmt);
@@ -984,22 +825,27 @@ private:
             
             for (const auto& ssaName : current) {
                 // Look up definition in varDefs
+                // METHOD A: Use stored usedVars (if they're correct)
                 auto it = varDefs.find(ssaName);
                 if (it != varDefs.end()) {
                     const DefinitionInfo& def = it->second;
+                    for (const auto& var : def.usedVars) {
+                        if (relevantSSANames.insert(var).second) {
+                                changed = true;
+                         }
+                    }
                     
-                    // METHOD A: Use stored usedVars (if they're correct)
-                    for (const auto& usedVar : def.usedVars) {
+                    /*for (const auto& usedVar : def.usedVars) {
                         std::string usedSSA = findLatestSSAName(usedVar.name);
                         if (!usedSSA.empty()) {
                             if (relevantSSANames.insert(usedSSA).second) {
                                 changed = true;
                             }
                         }
-                    }
+                    }*/
                     
                     // METHOD B: Extract directly from definingExpr (more reliable)
-                    if (def.definingExpr) {
+                    /*if (def.definingExpr) {
                         std::vector<std::string> extractedVars;
                         extractVariablesFromExpr(def.definingExpr, extractedVars);
                         for (const auto& baseName : extractedVars) {
@@ -1010,7 +856,7 @@ private:
                                 }
                             }
                         }
-                    }
+                    }*/
                 }
             }
         }
