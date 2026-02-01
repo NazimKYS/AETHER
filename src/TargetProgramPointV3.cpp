@@ -592,8 +592,8 @@ public:
 
         if (DeclRefExpr* declRef = dyn_cast<DeclRefExpr>(expr)) {
             std::string name = declRef->getNameInfo().getAsString();
-            //out.push_back(symtab.latest(name)); //checking if findLatestSSAName get the same result
-            out.push_back(findLatestSSAName(name)); 
+            out.push_back(symtab.latest(name)); //checking if findLatestSSAName get the same result
+            //out.push_back(findLatestSSAName(name)); 
            
         }
         
