@@ -127,7 +127,7 @@ public:
         
         return retunedValue;//"_"+(this->vectorOfDefinitionContext[this->vectorOfDefinitionContext.size()-1])->getSsaLabel();
     }else if(vectorOfDefinitionContext.size()==0){
-        cout<<this->varName <<" has no definition yet !"<<"\n";
+        //cout<<this->varName <<" has no definition yet !"<<"\n";
         return "_Null";
     }
     else{
@@ -189,7 +189,7 @@ void pushIfNotInList(TrackedVariables var){
         if (it == AllTrackedVariables.end()) {
           AllTrackedVariables.push_back(var);
         } else { 
-            cout<<" &&&&& already exists &&& : " <<var.varName << "\n"; 
+            //cout<<" &&&&& already exists &&& : " <<var.varName << "\n"; 
             }
 }
 void printListOfUniqueVariables(){
@@ -209,7 +209,7 @@ string getCurrentSsaLabelOfVariable(const VarDecl *VD){
           return it->getLastSsaLable(); //need to check size defContext if >0 there a def so there is ssaLable but if size ==0 it means Null or not yet filled with def context beacause of the 1st pass related to backward AST traversing in condPathComputig 
         }else{
                 //end without finding the var in tracked var
-                cout << "Definitions are not Not yet tracked since the list has no instance of this var maybe coming from computeCondPath\n";
+                //cout << "Definitions are not Not yet tracked since the list has no instance of this var maybe coming from computeCondPath\n";
             return "";//Definitions are not Not yet tracked since the list has no instance of this var maybe coming from computeCondPath\n";
             /*cout<<"\n AllTrackedVariables  : start checking size vec"<<  AllTrackedVariables.size()<< "\n";
             for (TrackedVariables v : AllTrackedVariables){

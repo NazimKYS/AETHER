@@ -38,6 +38,9 @@ void foo(char username[], char password[]) {
   }else{c=a*(b+serviceId);
     writeOnly(uid_sid, serviceId);
   }
+  if(serviceId>100){
+    serviceId=31;
+  }
   return;
 }
 

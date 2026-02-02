@@ -76,6 +76,7 @@ struct SMTVariableDefinition {
 struct SMTTargetContext {
     const clang::Stmt* targetStmt = nullptr;
     std::vector<std::string> targetPathConditions;
+    std::vector<SSAVariable> variablesUsedIn;
     std::unordered_map<std::string, std::vector<SMTVariableDefinition>> variableDefinitions;
     std::vector<std::string> targetVariables;
     std::set<std::string> relevantVariables;
@@ -177,27 +178,48 @@ private:
     //SSASymbolTable symtab;
     std::unordered_map<unsigned, std::vector<DefinitionInfo>> lineToDefinitions;
     // make it global // std::unordered_map<std::string, DefinitionInfo> varDefs;
-    
-
     std::stack<std::string> conditionStack;  
 public:
-  const Stmt *globalTargetStmt;
-  ASTContext *globalAstContext;
-  std::vector<StmtAttributes> vectorOfParentStmt = {};
-  const FunctionDecl *parentFunctionOfProgramPoint;
-  std::vector<std::unordered_map<std::string, SSAVariable>> ssaStateStack;
-  std::set<std::string> variablesRelatedToTargetStmt;
-  // Add to your class:
+    const Stmt *globalTargetStmt;
+    ASTContext *globalAstContext;
+    std::vector<StmtAttributes> vectorOfParentStmt = {};
+    const FunctionDecl *parentFunctionOfProgramPoint;
+    std::vector<std::unordered_map<std::string, SSAVariable>> ssaStateStack;
+    std::set<std::string> variablesRelatedToTargetStmt;
+    // Add to your class:
     bool targetFound = false;
     std::vector<std::string> getCurrentPathConditions() const;
 
-  struct PathCondition {
-        const clang::Expr* conditionExpr;
-        bool isTrueBranch; // true = then, false = else
-        std::string smtString; // optional: precomputed string
-  };
+struct PathCondition {
+    const clang::Expr* conditionExpr = nullptr;  // Initialize pointer!
+    bool isTrueBranch = false;                   // Default to else branch
+    std::string smtString;                       // Empty by default (std::string is safe)
+    std::vector<std::string> ssaUsedVars;
 
-  std::vector<PathCondition> pathConditions; // ← NEW
+    // Default constructor (optional but safe)
+    PathCondition() = default;
+
+    // CORRECT constructor using member initializer list
+    PathCondition(const clang::Expr* condExpr, 
+                  bool trueBranch,
+                  std::vector<std::string> usedVars = {})
+        : conditionExpr(condExpr),
+          isTrueBranch(trueBranch),
+          ssaUsedVars(std::move(usedVars))  // Efficient move
+    {}
+    void printUsedVars() const {
+        std::cout << "SSA vars (" << ssaUsedVars.size() << "): ";
+        for (size_t i = 0; i < ssaUsedVars.size(); ++i) {
+            std::cout << ssaUsedVars[i];
+            if (i < ssaUsedVars.size() - 1) std::cout << ", ";
+        }
+        std::cout << '\n';
+    }
+
+};
+
+     std::vector<PathCondition> pathConditions; // ← NEW
+     std::stack<PathCondition> gloablPathConditions; // ← NEW
 
     TargetProgramPoint(){};
     TargetProgramPoint(const Stmt *targetStmt, ASTContext &astContext) {
@@ -254,13 +276,14 @@ public:
     std::vector<std::string> allExpressions = {};
 
     std::string condState = "";
-    pathConditions.clear();
+    //pathConditions.clear();
     for (unsigned int i = 0; i < vectorOfParentStmt.size(); ++i) {
       //cout<<" for loop getConditionPath index "<<i<<" \n";
       const Stmt *st = vectorOfParentStmt[i].st;
       if (isa<IfStmt>(st)) {
         const IfStmt *ifStmt = cast<IfStmt>(st);
         condition = ifStmt->getCond();
+        condition->dump();
         if (!condition) continue;
 
         bool isTrueBranch = false;
@@ -270,7 +293,7 @@ public:
           StmtAttributes nextStmt = vectorOfParentStmt[i - 1];
           if (nextStmt.id == (ifStmt->getThen())->getID(*globalAstContext)) {
             // comment line 260 & 266
-            cout<<"vectorSize = "<<vectorOfParentStmt.size()<<" access element vector[ "<<i - 1 <<" ]\n";
+            //cout<<"vectorSize = "<<vectorOfParentStmt.size()<<" access element vector[ "<<i - 1 <<" ]\n";
             condState = "";
             isTrueBranch = true;
             //listOfAtomicElements.push_back(AtomicElementOfConditionPath("unaryOp","Not Not"));
@@ -286,10 +309,14 @@ public:
           
         } // check if we are in the block of then or in the else block
        
-        
-        PathCondition pc;
-        pc.conditionExpr = condition;
-        pc.isTrueBranch = isTrueBranch;
+        std::vector<std::string> vars;
+        collectUsedVarsFromCondPath(const_cast<clang::Expr*>(condition), vars);  // ✅ Called on 'this' instance
+
+        // Now construct with precomputed data
+        //PathCondition pc(condition, isTrueBranch, vars);
+       
+        // pc.conditionExpr = condition;
+        // pc.isTrueBranch = isTrueBranch;
 
         const Stmt *conditionStmt= ifStmt->getCond(); 
         if(condState=="Not"){
@@ -297,15 +324,16 @@ public:
           NodeTool *tree = new NodeTool(conditionStmt);
           NodeTool root(condState,tree);
           //cout<<"roooooooooooooot Not \n"<<root.pyz3ApiFlatten()<<"\n";
-          pc.smtString = root.pyz3ApiFlatten();
+          //pc.smtString = root.pyz3ApiFlatten();
         }else{
           //NodeTool *tree = new NodeTool(conditionStmt); /* to avoid ==10661==ERROR: LeakSanitizer: detected memory leaks Direct leak of 96 byte(s) in 1 object(s) allocated from:    1 0x5d81cfdda85a in TargetProgramPoint::getConditionPathV2() src/TargetProgramPoint.cpp:315 */
           NodeTool tree(conditionStmt);
           //cout<<"roooooooooooooot true \n"<<tree.pyz3ApiFlatten()<<"\n";
-          pc.smtString = tree.pyz3ApiFlatten();
+          //pc.smtString = tree.pyz3ApiFlatten();
           
         }
-        pathConditions.push_back(pc);
+        //pathConditions.push_back(pc);
+        //pc.printUsedVars();
         binaryOpToStrV2(conditionStmt,globalAstContext);
         
         // testing binaryStrV2 
@@ -315,19 +343,6 @@ public:
         //cout<<"allexpression size"<< allExpressions.size()<<"\n";*/
       }  
     }
-
-    // disable printing final expression while testing new datStructure
-    /*if (allExpressions.size() == 0) {
-      cout << "the target instruction will be executed at each call of "<<
-      parentFunctionOfProgramPoint->getNameInfo().getName().getAsString()
-              <<" function \n";
-    } else {
-
-      for (unsigned int i = 0; i < allExpressions.size() - 1; i++) {
-        expression = expression + allExpressions[i] + " and ";
-      }
-      cout << expression + allExpressions[allExpressions.size() - 1] << "\n";
-    }*/
 
   }
   
@@ -449,6 +464,57 @@ public:
         }
     }
 
+    void collectUsedVarsFromCondPath(Expr* expr, std::vector<std::string>& out) {
+
+        
+        if(isa<DeclRefExpr>(expr)){
+            DeclRefExpr *dre = dyn_cast<DeclRefExpr>(expr);
+            if (VarDecl *VD = dyn_cast<VarDecl>(dre->getDecl())) {
+                std::string name = dre->getNameInfo().getAsString();
+                cout<< "&&&& collectUsedVarsFromCondPath current name : "<<name <<"\n";
+                out.push_back(findLatestSSAName(name));
+
+            }
+        }else if(isa<ParenExpr>(expr)){
+            ParenExpr *parenExpr= dyn_cast<ParenExpr>(expr);
+            if(isa<BinaryOperator>(dyn_cast<BinaryOperator>(parenExpr->getSubExpr()))){
+                BinaryOperator *binOpStmt=dyn_cast<BinaryOperator>(parenExpr->getSubExpr());
+                collectUsedVarsFromCondPath(dyn_cast<Expr>(binOpStmt),out);
+            }
+            
+        }else if(isa<BinaryOperator>(expr)){
+            BinaryOperator *binOpStmt=dyn_cast<BinaryOperator>(expr);
+            Expr *lhs = (binOpStmt->getLHS())->IgnoreImpCasts();
+            Expr *rhs = (binOpStmt->getRHS())->IgnoreImpCasts();
+            collectUsedVarsFromCondPath(rhs,out);
+            collectUsedVarsFromCondPath(lhs,out);
+            
+            
+        }else if(isa<ImplicitCastExpr>(expr)){
+            Expr *SkipingImplicitCast= (dyn_cast<ImplicitCastExpr>(expr))->IgnoreImpCasts();
+            collectUsedVarsFromCondPath(SkipingImplicitCast,out);
+        
+        }else if(isa<CStyleCastExpr>(expr)){
+            Expr *subExpr= (dyn_cast<CStyleCastExpr>(expr))->getSubExpr();
+            collectUsedVarsFromCondPath(subExpr,out);
+        
+        }else if(isa<MemberExpr>(expr)){
+            Expr *SkipingImplicitCast= (dyn_cast<ImplicitCastExpr>(expr))->IgnoreImpCasts();
+            collectUsedVarsFromCondPath(SkipingImplicitCast,out);
+        
+        }else{/*
+            logFile<<" extractUsedVariables : " <<(dyn_cast<Stmt>(expr))->getStmtClassName()<<"\n";
+            cout<<" extractUsedVariables : " <<(dyn_cast<Stmt>(expr))->getStmtClassName()<<"\n";
+            //expr->dump();
+            cout<<"not decl ref\n";*/
+        }
+    }
+
+
+    
+  
+
+
     const std::unordered_map<unsigned, std::vector<DefinitionInfo>>& getLineMap() const {
         return lineToDefinitions;
     }
@@ -533,143 +599,139 @@ public:
                 }
             }
 
-            // llvm::outs() << "\n=== Building SMT Context ===\n";
-            // SMTTargetContext smtContext = buildSMTContext();
-            // printSMTContext(smtContext);
-            
-            // // ✅ USE THE NEW FUNCTION INSTEAD
-            // SSAVarInfo info = getSSAVarInfoFromVarDefs("serviceId_0");
-            // if (info.found) {
-            //     llvm::outs() << "Base name: " << info.baseName << "\n";
-            //     llvm::outs() << "Version: " << info.version << "\n";
-            //     llvm::outs() << "Expression: " << info.exprString << "\n";
-            // }
-            
-            // // Print variable history (this works fine)
-            // printVariableHistory();
         } else {
             llvm::errs() << "Target statement not found!\n";
         } 
-        cout<< "!!! printing variable history \n";
-        printVariableHistory();
+        //cout<< "!!! printing variable history \n";
+        //printVariableHistory();
 
 
     }
 
 
-  bool visitAllStmts(const Stmt* stmt) {
-    if (!stmt) return false;
+    bool visitAllStmts(const Stmt* stmt) {
+        if (!stmt) return false;
 
-    if (stmt == globalTargetStmt) {
-         if (isa<BinaryOperator>(stmt)) {
+        if (stmt == globalTargetStmt) {
+            if (isa<BinaryOperator>(stmt)) {
+                BinaryOperator* binOp = const_cast<BinaryOperator*>(cast<BinaryOperator>(stmt));
+                VisitBinaryOperator(binOp, stmt);
+            }
+            // Add other statement types as needed (CallExpr, etc.)
+            
+            llvm::outs() << "******* TARGET STMT FOUND — STOPPING \n";
+            printConditionStackTopToBottom(conditionStack);
+            targetFound = true;
+            return true;
+        }
+
+        if (isa<IfStmt>(stmt)) {
+            IfStmt* ifStmt = const_cast<IfStmt*>(cast<IfStmt>(stmt));
+            Expr* condExpr = ifStmt->getCond();
+            
+            std::vector<string> usedVars;
+            collectUsedVars(condExpr, usedVars); //extract variables used from condExpression in list usedVars
+
+            std::string condText;
+            llvm::raw_string_ostream ss(condText);
+            condExpr->printPretty(ss, nullptr, globalAstContext->getPrintingPolicy());
+            std::string rewrittenCond = rewriteWithSSA(ss.str(), usedVars);
+
+            SSAVariable condVar("cond");//symtab.define("cond");
+            FullSourceLoc fullLoc = globalAstContext->getFullLoc(ifStmt->getIfLoc());
+            unsigned line = fullLoc.getSpellingLineNumber();
+            unsigned stmtID = reinterpret_cast<uintptr_t>(ifStmt);
+
+            DefinitionInfo condInfo = {
+                condVar,
+                line,
+                stmtID,
+                condVar.ssaName() + " = " + rewrittenCond,
+                usedVars,
+                {},  // conditionContext will be filled from stack
+                nullptr,  // definingExpr
+                condExpr, // conditionExpr
+                ifStmt    // defStmt
+            };
+            
+            // Fill condition context from current stack
+            std::stack<std::string> tmpStack = conditionStack;
+            while (!tmpStack.empty()) {
+                condInfo.conditionContext.insert(condInfo.conditionContext.begin(), tmpStack.top());
+                tmpStack.pop();
+            }
+
+            lineToDefinitions[line].push_back(condInfo);
+            varDefs[condVar.ssaName()] = condInfo;
+
+            std::vector<std::string> vars;
+            collectUsedVarsFromCondPath(condExpr, vars);  // ✅ Called on 'this' instance
+
+            // Now construct with precomputed data
+            
+        
+            
+             
+
+            if (const Stmt* thenBody = ifStmt->getThen()) {
+                conditionStack.push(rewrittenCond);
+                PathCondition pc(condExpr, true, vars);
+                pc.smtString=rewrittenCond;
+                pc.printUsedVars();
+                gloablPathConditions.push(pc);
+                if (visitAllStmts(thenBody)) return true;
+                conditionStack.pop();
+                gloablPathConditions.pop();
+            }
+
+            if (const Stmt* elseBody = ifStmt->getElse()) {
+                conditionStack.push("!(" + rewrittenCond + ")");
+                PathCondition pc(condExpr, false, vars);
+                pc.smtString="!(" + rewrittenCond + ")";
+                 pc.printUsedVars();
+                gloablPathConditions.push(pc);
+                if (visitAllStmts(elseBody)) return true;
+                conditionStack.pop();
+                gloablPathConditions.pop();
+            }
+            return false;
+        }
+
+        if (isa<BinaryOperator>(stmt)) {
             BinaryOperator* binOp = const_cast<BinaryOperator*>(cast<BinaryOperator>(stmt));
-            VisitBinaryOperator(binOp, stmt);
-        }
-        // Add other statement types as needed (CallExpr, etc.)
-        
-        llvm::outs() << "******* TARGET STMT FOUND — STOPPING \n";
-        printConditionStackTopToBottom(conditionStack);
-        targetFound = true;
-        return true;
-    }
-
-    if (isa<IfStmt>(stmt)) {
-        IfStmt* ifStmt = const_cast<IfStmt*>(cast<IfStmt>(stmt));
-        Expr* condExpr = ifStmt->getCond();
-        
-        std::vector<string> usedVars;
-        collectUsedVars(condExpr, usedVars); //extract variables used from condExpression in list usedVars
-
-        std::string condText;
-        llvm::raw_string_ostream ss(condText);
-        condExpr->printPretty(ss, nullptr, globalAstContext->getPrintingPolicy());
-        std::string rewrittenCond = rewriteWithSSA(ss.str(), usedVars);
-
-        SSAVariable condVar("cond");//symtab.define("cond");
-        FullSourceLoc fullLoc = globalAstContext->getFullLoc(ifStmt->getIfLoc());
-        unsigned line = fullLoc.getSpellingLineNumber();
-        unsigned stmtID = reinterpret_cast<uintptr_t>(ifStmt);
-
-        DefinitionInfo condInfo = {
-            condVar,
-            line,
-            stmtID,
-            condVar.ssaName() + " = " + rewrittenCond,
-            usedVars,
-            {},  // conditionContext will be filled from stack
-            nullptr,  // definingExpr
-            condExpr, // conditionExpr
-            ifStmt    // defStmt
-        };
-        
-        // Fill condition context from current stack
-        std::stack<std::string> tmpStack = conditionStack;
-        while (!tmpStack.empty()) {
-            condInfo.conditionContext.insert(condInfo.conditionContext.begin(), tmpStack.top());
-            tmpStack.pop();
+            VisitBinaryOperator(binOp, stmt); // Pass stmt for AST preservation
         }
 
-        lineToDefinitions[line].push_back(condInfo);
-        varDefs[condVar.ssaName()] = condInfo;
-
-        if (const Stmt* thenBody = ifStmt->getThen()) {
-            conditionStack.push(rewrittenCond);
-            if (visitAllStmts(thenBody)) return true;
-            conditionStack.pop();
+        for (auto child = stmt->child_begin(); child != stmt->child_end(); ++child) {
+            if (visitAllStmts(*child)) {
+                return true;
+            }
         }
 
-        if (const Stmt* elseBody = ifStmt->getElse()) {
-            conditionStack.push("!(" + rewrittenCond + ")");
-            if (visitAllStmts(elseBody)) return true;
-            conditionStack.pop();
-        }
         return false;
     }
 
-    if (isa<BinaryOperator>(stmt)) {
-        BinaryOperator* binOp = const_cast<BinaryOperator*>(cast<BinaryOperator>(stmt));
-        VisitBinaryOperator(binOp, stmt); // Pass stmt for AST preservation
-    }
-
-    for (auto child = stmt->child_begin(); child != stmt->child_end(); ++child) {
-        if (visitAllStmts(*child)) {
-            return true;
+    void printPathConditions() {
+        if (pathConditions.empty()) {
+            llvm::outs() << "No path conditions.\n";
+            return;
         }
-    }
 
-    return false;
-}
-
-  void printPathConditions() {
-    if (pathConditions.empty()) {
-        llvm::outs() << "No path conditions.\n";
-        return;
-    }
-
-    
-    for (size_t i = 0; i < pathConditions.size(); ++i) {
-        const auto& pc = pathConditions[i];
-        llvm::outs()  << pc.smtString <<  "\n";
-        /*if(pc.isTrueBranch){ 
-           llvm::outs()  << "(" << pc.smtString << ") \n";
-        }else{
-          llvm::outs()  << "Not(" << pc.smtString << ") \n";
-        }*/
         
-    }
-  } 
-
-
-  void collectVariablesFromTarget(std::set<std::string>& vars) {
-    if (const auto* callExpr = dyn_cast<clang::CallExpr>(globalTargetStmt)) {
-        for (unsigned i = 0; i < callExpr->getNumArgs(); ++i) {
-            std::vector<std::string> tempVars;
-            extractVariablesFromExpr(callExpr->getArg(i), tempVars);
-            // Add all variables from tempVars to the set
-            vars.insert(tempVars.begin(), tempVars.end());
+        for (size_t i = 0; i < pathConditions.size(); ++i) {
+            const auto& pc = pathConditions[i];
+            llvm::outs()  << pc.smtString <<  "\n";
+            /*if(pc.isTrueBranch){ 
+            llvm::outs()  << "(" << pc.smtString << ") \n";
+            }else{
+            llvm::outs()  << "Not(" << pc.smtString << ") \n";
+            }*/
+            
         }
-    }
-}
+    } 
+
+
+
 
   void printConditionStackTopToBottom(std::stack<std::string>& stack) {
     if (stack.empty()) {
@@ -835,28 +897,6 @@ private:
                          }
                     }
                     
-                    /*for (const auto& usedVar : def.usedVars) {
-                        std::string usedSSA = findLatestSSAName(usedVar.name);
-                        if (!usedSSA.empty()) {
-                            if (relevantSSANames.insert(usedSSA).second) {
-                                changed = true;
-                            }
-                        }
-                    }*/
-                    
-                    // METHOD B: Extract directly from definingExpr (more reliable)
-                    /*if (def.definingExpr) {
-                        std::vector<std::string> extractedVars;
-                        extractVariablesFromExpr(def.definingExpr, extractedVars);
-                        for (const auto& baseName : extractedVars) {
-                            std::string extractedSSA = findLatestSSAName(baseName);
-                            if (!extractedSSA.empty()) {
-                                if (relevantSSANames.insert(extractedSSA).second) {
-                                    changed = true;
-                                }
-                            }
-                        }
-                    }*/
                 }
             }
         }
@@ -924,7 +964,7 @@ private:
     }
 
     
-        std::string getBaseNameFromSSA(const std::string& ssaName) const {
+    std::string getBaseNameFromSSA(const std::string& ssaName) const {
         if (ssaName.empty()) return ssaName;
         
         size_t lastUnderscore = ssaName.find_last_of('_');
@@ -1143,33 +1183,19 @@ private:
     }
 
 
-SSAVarInfo getSSAVarInfoFromVarDefs(const std::string& ssaName) const {
-    SSAVarInfo info;
-    auto it = varDefs.find(ssaName);
-    if (it != varDefs.end()) {
-        const DefinitionInfo& def = it->second;
-        info.found = true;
-        info.baseName = def.ssaVar.name;
-        info.version = def.ssaVar.version;
-        info.exprString = def.exprString;
-        info.definingExpr = def.definingExpr;
-        info.pathConditions = def.conditionContext;
-    }
-    return info;
-}
-    /*
-public:
-// Implementation
-    ~TargetProgramPoint() {
-        // Clear condition stack safely
-        while (!conditionStack.empty()) {
-            conditionStack.pop();
+    SSAVarInfo getSSAVarInfoFromVarDefs(const std::string& ssaName) const {
+        SSAVarInfo info;
+        auto it = varDefs.find(ssaName);
+        if (it != varDefs.end()) {
+            const DefinitionInfo& def = it->second;
+            info.found = true;
+            info.baseName = def.ssaVar.name;
+            info.version = def.ssaVar.version;
+            info.exprString = def.exprString;
+            info.definingExpr = def.definingExpr;
+            info.pathConditions = def.conditionContext;
         }
-        // Clear symbol table
-        symtab.clear(); // You'll need to add this method
-        
-        // Clear other containers
-        varDefs.clear();
-        lineToDefinitions.clear();
-    }*/
+        return info;
+    }
+
 };
