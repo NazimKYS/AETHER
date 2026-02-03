@@ -86,14 +86,40 @@ struct DefinitionInfo {
     SSAVariable ssaVar;
     unsigned line;
     unsigned stmtID;
+    string varType;
     std::string exprString;
     std::vector<std::string> usedVars;
     std::vector<std::string> conditionContext;
-    
+    // bool hasExplicitCast
+    // bool isCondtionalDefinition
+    //std::vector<std::string> conditionContext;
+
     // NEW: Store original AST nodes for SMT generation
     const clang::Expr* definingExpr = nullptr;    // RHS of assignment
     const clang::Expr* conditionExpr = nullptr;   // For if conditions
     const clang::Stmt* defStmt = nullptr;        // The statement itself
+
+    std::string getPyZ3Declaration() const {
+        string def ="#NULL not handled data type "+ varType;
+        string ssaName = ssaVar.ssaName();
+        if(varType=="int" || varType=="long" || varType=="short" || varType=="long long" ){
+
+            def = ssaName + " = Int('"+ssaName+"')" ; //serviceId = Int('serviceId') 
+        }
+        return def;
+    }
+
+    std::string getPyZ3Definition() const {
+        string def ="#NULL not handled data type "+ varType;
+        string ssaName = ssaVar.ssaName();
+        if( true ){
+
+            def = ssaName + " = Int('"+ssaName+"')" ; //serviceId = Int('serviceId') 
+        }
+        return def;
+    }
+
+
 };
 
 
@@ -184,11 +210,11 @@ public:
     ASTContext *globalAstContext;
     std::vector<StmtAttributes> vectorOfParentStmt = {};
     const FunctionDecl *parentFunctionOfProgramPoint;
-    std::vector<std::unordered_map<std::string, SSAVariable>> ssaStateStack;
     std::set<std::string> variablesRelatedToTargetStmt;
     // Add to your class:
     bool targetFound = false;
     std::vector<std::string> getCurrentPathConditions() const;
+    std::set<std::string> relevantVariables;
 
 struct PathCondition {
     const clang::Expr* conditionExpr = nullptr;  // Initialize pointer!
@@ -218,7 +244,7 @@ struct PathCondition {
 
 };
 
-     std::vector<PathCondition> pathConditions; // ← NEW
+    
      std::stack<PathCondition> gloablPathConditions; // ← NEW
 
     TargetProgramPoint(){};
@@ -354,7 +380,10 @@ struct PathCondition {
 
         if (DeclRefExpr* declRef = dyn_cast<DeclRefExpr>(lhs)) {
             std::string varName = declRef->getNameInfo().getAsString();
-
+            string varTypeStr = "";
+            if (const VarDecl *vd = dyn_cast<VarDecl>(declRef->getDecl())) {
+                varTypeStr=(vd->getType()).getAsString();     
+            }
             // Collect used variables (you'll need to pass current path state)
             std::vector<string> usedVars;
             collectUsedVars(rhs, usedVars); // heere we have  Update this later if needed
@@ -425,12 +454,17 @@ struct PathCondition {
             FullSourceLoc fullLoc = globalAstContext->getFullLoc(binOp->getExprLoc());
             unsigned line = fullLoc.getSpellingLineNumber();
             unsigned stmtID = reinterpret_cast<uintptr_t>(binOp);
+            
+            
+
+
 
             // You can still store in varDefs if needed for debugging
             DefinitionInfo info = {
                 newDef,
                 line,
                 stmtID,
+                varTypeStr,
                 newDef.ssaName() + " = " + substituted,
                 usedVars,
                 currentPathConditions,
@@ -601,7 +635,9 @@ struct PathCondition {
 
         } else {
             llvm::errs() << "Target statement not found!\n";
-        } 
+        }
+        relevantVariables=computeRelevantVariablesWithSSANames(); 
+        cout<<genVariableDeclarationPyZ3();
         //cout<< "!!! printing variable history \n";
         //printVariableHistory();
 
@@ -641,11 +677,12 @@ struct PathCondition {
             FullSourceLoc fullLoc = globalAstContext->getFullLoc(ifStmt->getIfLoc());
             unsigned line = fullLoc.getSpellingLineNumber();
             unsigned stmtID = reinterpret_cast<uintptr_t>(ifStmt);
-
+            string condType="";
             DefinitionInfo condInfo = {
                 condVar,
                 line,
                 stmtID,
+                condType,
                 condVar.ssaName() + " = " + rewrittenCond,
                 usedVars,
                 {},  // conditionContext will be filled from stack
@@ -711,24 +748,24 @@ struct PathCondition {
         return false;
     }
 
-    void printPathConditions() {
-        if (pathConditions.empty()) {
-            llvm::outs() << "No path conditions.\n";
-            return;
-        }
+    // void printPathConditions() {
+    //     if (pathConditions.empty()) {
+    //         llvm::outs() << "No path conditions.\n";
+    //         return;
+    //     }
 
         
-        for (size_t i = 0; i < pathConditions.size(); ++i) {
-            const auto& pc = pathConditions[i];
-            llvm::outs()  << pc.smtString <<  "\n";
-            /*if(pc.isTrueBranch){ 
-            llvm::outs()  << "(" << pc.smtString << ") \n";
-            }else{
-            llvm::outs()  << "Not(" << pc.smtString << ") \n";
-            }*/
+    //     for (size_t i = 0; i < pathConditions.size(); ++i) {
+    //         const auto& pc = pathConditions[i];
+    //         llvm::outs()  << pc.smtString <<  "\n";
+    //         /*if(pc.isTrueBranch){ 
+    //         llvm::outs()  << "(" << pc.smtString << ") \n";
+    //         }else{
+    //         llvm::outs()  << "Not(" << pc.smtString << ") \n";
+    //         }*/
             
-        }
-    } 
+    //     }
+    // } 
 
 
 
@@ -1198,4 +1235,61 @@ private:
         return info;
     }
 
+   /* void generatePyZ3(){
+      cout<< "\n\n\n******PyZ3 script generation *************\n\n\n";
+      string header="from z3 import *";
+      string varDeclarations="";
+      string conditionPath="";
+      string checkModels="";
+      string fullFile="";
+      generateSmtExpressions();
+      // missing all models 
+
+      for (TrackedVariables v : listOfUniqueVariables){
+          if(v.varType=="int" || v.varType=="long"){
+            varDeclarations=varDeclarations + v.varName + " = Int('"+ v.varName+"') \n";
+          }
+        }
+
+      //condition path initialisation
+      conditionPath="s = Solver()\n";
+      conditionPath=conditionPath+"s.add( ";
+      for(unsigned int i = 0; i < SmtConditionPathExpressions.size()-1; ++i)  {
+        string expr=SmtConditionPathExpressions[i];
+        conditionPath=conditionPath+ expr +", ";
+
+      }
+      conditionPath=conditionPath+SmtConditionPathExpressions[SmtConditionPathExpressions.size()-1]+ " )" ;
+      checkModels ="print(s.check()) \n";
+      checkModels=checkModels+"print(s.model()) \n";
+
+      fullFile=header+ "\n\n"+ varDeclarations + "\n\n" + conditionPath +"\n\n"+checkModels;
+
+    
+      cout<<fullFile;
+
+     }
+    
+    */
+    
+    std::string  genVariableDeclarationPyZ3(){
+        std::string fullDeclaration="";
+        for (const auto& ssaName : relevantVariables) {
+            
+            //llvm::outs() << "Relevant var: " << ssaName ;
+            auto it = varDefs.find(ssaName);
+            if (it != varDefs.end()) {
+                const DefinitionInfo& def = it->second;
+                fullDeclaration=fullDeclaration+def.getPyZ3Declaration();
+            }else{
+                cout<<" didn't find ssa var in varDefs \n";
+            }
+            fullDeclaration=fullDeclaration+"\n";
+            
+        }
+        return fullDeclaration;
+    }
+
+
+   
 };

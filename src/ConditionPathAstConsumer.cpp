@@ -60,6 +60,7 @@ public:
     (visitor.targetPoint).getConditionPathV2();
     cout<< "dumping ---------------------------------------- function \n";
     (visitor.targetPoint).exploreFunctionByStmt();
+    
     auto endChronoGetConditionPath = high_resolution_clock::now();
  
 
@@ -80,9 +81,9 @@ public:
     int count=0;
     //StatementVisitor sv;
     
-    (visitor.targetPoint).printPathConditions();
+//   (visitor.targetPoint).printPathConditions();
    // uncomment the following code up to std python solver
-    cout << "Vraiables found :" << AllTrackedVariables.size()<<"\n";
+    //cout << "Vraiables found :" << AllTrackedVariables.size()<<"\n";
      //<< std::endl; 
      //cout << "def found:"<<((AllTrackedVariables[0]).vectorOfDefExpressions).size()<< std::endl; printDefOfVariable(AllTrackedVariables[2]);
 
@@ -104,22 +105,3 @@ public:
 
 
 };
-/*virtual void HandleTranslationUnit(ASTContext &Ctx) {
-    // Assume you already have 'targetStmt' (e.g., from source location)
-  
-    visitor.TraverseDecl(Ctx.getTranslationUnitDecl());
-    //if((visitor.targetPoint).globalTargetStmt!=NULL){
-     
-    
-    for (const auto& decl : Ctx.getTranslationUnitDecl()->decls()) {
-        if (const auto* func = dyn_cast<FunctionDecl>(decl)) {
-            auto path = collectPathToTarget(func, (visitor.targetPoint).globalTargetStmt);//targetStmt);
-            if (path.found) {
-                // Store it!
-                this->rawPath = std::move(path);
-                path.dump(); // for debugging
-                break;
-            }
-        }
-    }
-  }*/
