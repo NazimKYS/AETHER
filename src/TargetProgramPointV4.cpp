@@ -2,7 +2,7 @@
 #include "main.h"
 
 int getCurrentSsaVersionOfVariable(string baseName);
-
+struct PathCondition;
 // Replace your current SSAVariable struct with this
 struct SSAVariable {
     std::string name;        // Keep this as "name" to match your existing code
@@ -91,14 +91,53 @@ struct DefinitionInfo {
     std::vector<std::string> usedVars;
     std::vector<std::string> conditionContext;
     // bool hasExplicitCast
-    // bool isCondtionalDefinition
-    //std::vector<std::string> conditionContext;
+    bool isCondtionalDefinition;
+    std::vector<PathCondition> globalConditionContext;
 
-    // NEW: Store original AST nodes for SMT generation
-    const clang::Expr* definingExpr = nullptr;    // RHS of assignment
-    const clang::Expr* conditionExpr = nullptr;   // For if conditions
     const clang::Stmt* defStmt = nullptr;        // The statement itself
 
+
+    DefinitionInfo() = default;
+
+    // 2. CORE CONSTRUCTOR (enforce critical fields)
+    //    Use when you have SSA variable + location + type upfront
+    DefinitionInfo(const SSAVariable& var, 
+                   unsigned ln, 
+                   unsigned id, 
+                   const std::string& type)
+        : ssaVar(var), line(ln), stmtID(id), varType(type) 
+    {}
+
+    DefinitionInfo(const SSAVariable& ssaVar,        // ← const ref (no copy)
+                   unsigned line, 
+                   unsigned stmtID,
+                   const std::string& varType,       // ← const ref
+                   const std::string& exprString,    // ← const ref
+                   const std::vector<std::string>& usedVars,      // ← const ref
+                   const std::vector<std::string>& conditionContext)  // ← const ref
+        : ssaVar(ssaVar),          // Parameter name = member name (allowed in initializer list)
+          line(line),              // Safe: parameter shadows member, but initializer resolves correctly
+          stmtID(stmtID),
+          varType(varType),
+          exprString(exprString),
+          usedVars(usedVars),
+          conditionContext(conditionContext)
+          // Pointers auto-initialized to nullptr via in-class initializers
+    {}
+
+    DefinitionInfo(const SSAVariable& ssaVar,
+                   unsigned line,
+                   unsigned stmtID,
+                   const std::string& varType,
+                   const std::string& exprString,
+                   const std::vector<std::string>& usedVars,
+                   const std::vector<std::string>& conditionContext,
+                   const clang::Stmt* defStmt)
+        : ssaVar(ssaVar), line(line), stmtID(stmtID), varType(varType),
+          exprString(exprString), usedVars(usedVars), 
+          conditionContext(conditionContext), 
+          defStmt(defStmt)
+    {}
     std::string getPyZ3Declaration() const {
         string def ="#NULL not handled data type "+ varType;
         string ssaName = ssaVar.ssaName();
@@ -117,6 +156,28 @@ struct DefinitionInfo {
             def = ssaName + " = Int('"+ssaName+"')" ; //serviceId = Int('serviceId') 
         }
         return def;
+    }
+
+    void copyCondPathFromstackToVector(std::stack<PathCondition> &gloablPathConditions){
+        
+        globalConditionContext.clear();
+        
+        if (gloablPathConditions.empty()){
+            
+            isCondtionalDefinition=false;
+            return;  // Early exit
+        }else{
+            isCondtionalDefinition=true;
+            std::stack<PathCondition> temp = gloablPathConditions;
+            std::vector<PathCondition> reversed;
+            reversed.reserve(temp.size());
+            
+            while (!temp.empty()) {
+                reversed.push_back(std::move(temp.top()));
+                temp.pop();
+            }
+            globalConditionContext.assign(reversed.rbegin(), reversed.rend());
+        }
     }
 
 
@@ -194,28 +255,6 @@ std::string rewriteWithSSA(const std::string& original, const std::vector<std::s
     return rewritten;
 }
 
-
-
-// Helper functions (implement these as shown in previous answer)
-
-class TargetProgramPoint {
-    
-private:
-    //SSASymbolTable symtab;
-    std::unordered_map<unsigned, std::vector<DefinitionInfo>> lineToDefinitions;
-    // make it global // std::unordered_map<std::string, DefinitionInfo> varDefs;
-    std::stack<std::string> conditionStack;  
-public:
-    const Stmt *globalTargetStmt;
-    ASTContext *globalAstContext;
-    std::vector<StmtAttributes> vectorOfParentStmt = {};
-    const FunctionDecl *parentFunctionOfProgramPoint;
-    std::set<std::string> variablesRelatedToTargetStmt;
-    // Add to your class:
-    bool targetFound = false;
-    std::vector<std::string> getCurrentPathConditions() const;
-    std::set<std::string> relevantVariables;
-
 struct PathCondition {
     const clang::Expr* conditionExpr = nullptr;  // Initialize pointer!
     bool isTrueBranch = false;                   // Default to else branch
@@ -244,8 +283,27 @@ struct PathCondition {
 
 };
 
+
+// Helper functions (implement these as shown in previous answer)
+
+class TargetProgramPoint {
     
-     std::stack<PathCondition> gloablPathConditions; // ← NEW
+private:
+    //SSASymbolTable symtab;
+    std::unordered_map<unsigned, std::vector<DefinitionInfo>> lineToDefinitions;
+    // make it global // std::unordered_map<std::string, DefinitionInfo> varDefs;
+    std::stack<std::string> conditionStack;  
+public:
+    const Stmt *globalTargetStmt;
+    ASTContext *globalAstContext;
+    std::vector<StmtAttributes> vectorOfParentStmt = {};
+    const FunctionDecl *parentFunctionOfProgramPoint;
+    std::set<std::string> variablesRelatedToTargetStmt;
+    // Add to your class:
+    bool targetFound = false;
+    std::vector<std::string> getCurrentPathConditions() const;
+    std::set<std::string> relevantVariables;
+    std::stack<PathCondition> gloablPathConditions; // ← NEW
 
     TargetProgramPoint(){};
     TargetProgramPoint(const Stmt *targetStmt, ASTContext &astContext) {
@@ -436,13 +494,6 @@ struct PathCondition {
                 tmpStack.pop();
             }
 
-            // ✅ USE ENHANCED SYMBOL TABLE
-            /*SSAVariable newDef = symtab.defineWithDefinition(
-                varName, 
-                substituted, 
-                rhs, 
-                currentPathConditions
-            );*/
             SSAVariable newDef(
                 varName, 
                 substituted, 
@@ -460,18 +511,19 @@ struct PathCondition {
 
 
             // You can still store in varDefs if needed for debugging
-            DefinitionInfo info = {
-                newDef,
+            DefinitionInfo info(newDef,
                 line,
                 stmtID,
                 varTypeStr,
                 newDef.ssaName() + " = " + substituted,
                 usedVars,
                 currentPathConditions,
-                rhs,
-                nullptr,
-                originalStmt ? originalStmt : binOp
-            };
+                //rhs,
+                //nullptr,
+                binOp);
+                //originalStmt ? originalStmt : binOp); //= {           };
+            info.copyCondPathFromstackToVector(gloablPathConditions);
+            
             lineToDefinitions[line].push_back(info);
             varDefs[newDef.ssaName()] = info;
             
@@ -686,8 +738,6 @@ struct PathCondition {
                 condVar.ssaName() + " = " + rewrittenCond,
                 usedVars,
                 {},  // conditionContext will be filled from stack
-                nullptr,  // definingExpr
-                condExpr, // conditionExpr
                 ifStmt    // defStmt
             };
             
@@ -697,6 +747,7 @@ struct PathCondition {
                 condInfo.conditionContext.insert(condInfo.conditionContext.begin(), tmpStack.top());
                 tmpStack.pop();
             }
+            condInfo.copyCondPathFromstackToVector(gloablPathConditions);
 
             lineToDefinitions[line].push_back(condInfo);
             varDefs[condVar.ssaName()] = condInfo;
@@ -706,9 +757,6 @@ struct PathCondition {
 
             // Now construct with precomputed data
             
-        
-            
-             
 
             if (const Stmt* thenBody = ifStmt->getThen()) {
                 conditionStack.push(rewrittenCond);
@@ -1111,7 +1159,6 @@ private:
         smtDef.baseName = def.ssaVar.name;
         smtDef.ssaName = def.ssaVar.ssaName();
         smtDef.version = def.ssaVar.version;
-        smtDef.definingExpr = def.definingExpr;
         smtDef.defStmt = def.defStmt;
         smtDef.exprString = def.exprString;
         smtDef.pathConditions = def.conditionContext;
@@ -1229,7 +1276,6 @@ private:
             info.baseName = def.ssaVar.name;
             info.version = def.ssaVar.version;
             info.exprString = def.exprString;
-            info.definingExpr = def.definingExpr;
             info.pathConditions = def.conditionContext;
         }
         return info;
