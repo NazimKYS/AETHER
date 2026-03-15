@@ -23,7 +23,7 @@ void foo(char username[], char password[]) {
   a=-999; 
   uid_sid = (long)userId * serviceId;
   b=-5;
-  if (userId == 0) {      
+  if (uid_sid == 0) {      
     serviceId = serviceId+1; 
     readAndWriteService(uid_sid, serviceId);
     if(serviceId>35 ){ //  && <==> and 

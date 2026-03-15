@@ -8,6 +8,7 @@ int getCurrentSsaVersionOfVariable(string baseName);
 
 static int FreshVarKcounter = 0;
 static int FreshVarXbarcounter = 0;
+static std::vector<std::string> freshVarNames;
 
 class SmtScript {
 public:
@@ -517,7 +518,7 @@ struct DefinitionInfo {
         }
     }
    
-    std::string handleArithmeticWithOverflow(const clang::Expr* expr) {
+    static std::string handleArithmeticWithOverflow(const clang::Expr* expr) {
     if (const auto* binOp = dyn_cast<clang::BinaryOperator>(expr)) {
         if (binOp->isAdditiveOp() || binOp->isMultiplicativeOp()) {
             std::string lhs = exprToPyZ3(binOp->getLHS());
@@ -526,8 +527,10 @@ struct DefinitionInfo {
             std::string originalExpr = "(" + lhs + " " + op + " " + rhs + ")";
             
             // Generate fresh variables
-            std::string kVar = "k" + std::to_string(++FreshVarKcounter);//generateFreshVar("k");
-            std::string xbarVar = "xbar" + std::to_string(++FreshVarXbarcounter);//generateFreshVar("xbar");
+            std::string kVar = "k" + std::to_string(++FreshVarKcounter);
+            std::string xbarVar = "xbar" + std::to_string(++FreshVarXbarcounter);
+            freshVarNames.push_back(kVar);
+            freshVarNames.push_back(xbarVar);
             
             // Get bit width
             unsigned bitWidth = 32;//getBitWidthOfExpr(expr);
@@ -543,7 +546,7 @@ struct DefinitionInfo {
     }
     return exprToPyZ3(expr);
 }
-    std::string exprToPyZ3(const clang::Expr* expr) const {
+    static std::string exprToPyZ3(const clang::Expr* expr) {
         if (!expr) return "smtString";
         
         // Handle implicit casts (very common in Clang AST)
@@ -640,7 +643,7 @@ struct DefinitionInfo {
     }
 
     // Helper to map Clang binary operators to PyZ3 operators
-    std::string getPyZ3BinaryOperator(clang::BinaryOperatorKind opcode) const {
+    static std::string getPyZ3BinaryOperator(clang::BinaryOperatorKind opcode) {
         switch (opcode) {
             case clang::BO_Add: return "+";
             case clang::BO_Sub: return "-";
@@ -741,7 +744,7 @@ struct PathCondition {
     bool isTrueBranch = false;                   // Default to else branch
     std::string smtString;                       // Empty by default (std::string is safe)
     std::vector<std::string> ssaUsedVars;
-
+    std::string smtStringWithSafetyAssertion;   
     // Default constructor (optional but safe)
     PathCondition() = default;
 
@@ -755,7 +758,8 @@ struct PathCondition {
     {
         smtString="";
         BinaryNodeTool binaryExpression(condExpr);
-        smtString = binaryExpression.pyz3ApiFlatten();  
+        smtString = binaryExpression.pyz3ApiFlatten();
+        smtStringWithSafetyAssertion = DefinitionInfo::handleArithmeticWithOverflow(condExpr);
 
     }
     void printUsedVars() const {
@@ -771,7 +775,7 @@ struct PathCondition {
     }
     std::string getPyz3smtStringExpressionWithSafetyAssertion() const {
         
-        return smtString;
+        return smtStringWithSafetyAssertion;
     }
 };
 
@@ -838,40 +842,7 @@ public:
         }
         // If parent is neither FunctionDecl nor Stmt, stop
     }   
- /*   void findParentStmt(const Stmt *s, bool allParentsFound) {
-        if (allParentsFound) {
-            cout << "all parent found : " << vectorOfParentStmt.size() << "\n";
-        } else {
-            const Stmt *ST = s;
-            const auto &parents = globalAstContext->getParents(*ST);  // ← only call once
 
-            if (parents.empty()) {
-            llvm::errs() << "Can not find parent\n";
-            allParentsFound = true;
-            } else {
-            // FIXED: use 'parents', not a new temporary!
-            auto it = parents.begin();
-            llvm::outs() << "Current Node Kind: " << it->getNodeKind().asStringRef() << "\n";
-
-            if (it->getNodeKind().asStringRef() == "FunctionDecl") {
-                parentFunctionOfProgramPoint = parents[0].get<FunctionDecl>();
-            }
-
-            if (parents.size() == 1) {
-                ST = parents[0].get<Stmt>();
-                if (!ST) {
-                allParentsFound = true;
-                findParentStmt(ST, allParentsFound);
-                } else {
-                StmtAttributes parentStmt =
-                    StmtAttributes(ST->getID(*globalAstContext), ST);
-                vectorOfParentStmt.push_back(parentStmt);
-                findParentStmt(ST, allParentsFound);
-                }
-            }
-            }
-        }
-}*/
 
     void getConditionPathV2() {
     cout<<"running getConditionPathV2 here\n";
@@ -1229,8 +1200,16 @@ public:
         
         cout<<genVariableDefinitionPyZ3();
         
-        
-        
+        cout<<"\n\n# *** Condition path *** \n\n";
+        cout<<genConditionPathPyZ3();
+
+        cout<<"\n\n# *** Checking satisfiability and getting models *** \n\n";
+        cout<<"print(s.check())\n";
+        cout<<"if(s.check()==sat):\n";
+        cout<<"\t print(s.model())\n";
+
+
+
         //cout<< "!!! printing variable history \n";
         //printVariableHistory();
 
@@ -1296,13 +1275,15 @@ public:
             std::vector<std::string> vars;
             collectUsedVarsFromCondPath(condExpr, vars);  // ✅ Called on 'this' instance
 
-            // Now construct with precomputed data
-            
+            // Compute safety-annotated condition BEFORE any branch traversal
+            // (same SSA state as rewrittenCond — avoids stale version lookups)
+            std::string safetyCondText = DefinitionInfo::handleArithmeticWithOverflow(condExpr);
 
             if (const Stmt* thenBody = ifStmt->getThen()) {
                 conditionStack.push(rewrittenCond);
                 PathCondition pc(condExpr, true, vars);
                 pc.smtString=rewrittenCond;
+                pc.smtStringWithSafetyAssertion = safetyCondText;
                 pc.printUsedVars();
                 gloablPathConditions.push(pc);
                 if (visitAllStmts(thenBody)) return true;
@@ -1311,10 +1292,11 @@ public:
             }
 
             if (const Stmt* elseBody = ifStmt->getElse()) {
-                conditionStack.push("!(" + rewrittenCond + ")");
+                conditionStack.push("Not(" + rewrittenCond + ")");
                 PathCondition pc(condExpr, false, vars);
-                pc.smtString="!(" + rewrittenCond + ")";
-                 pc.printUsedVars();
+                pc.smtString="Not(" + rewrittenCond + ")";
+                pc.smtStringWithSafetyAssertion = "Not(" + safetyCondText + ")";
+                pc.printUsedVars();
                 gloablPathConditions.push(pc);
                 if (visitAllStmts(elseBody)) return true;
                 conditionStack.pop();
@@ -1542,7 +1524,13 @@ private:
                                         changed = true;
                                 }
                             }
-                            
+                        }
+                        // Include rollback variable (phi-node alternative: x_N-1 when condition is false)
+                        if (def.ssaVar.version > 0) {
+                            std::string rollback = def.ssaVar.name + "_" + std::to_string(def.ssaVar.version - 1);
+                            if (relevantSSANames.insert(rollback).second) {
+                                changed = true;
+                            }
                         }
                     }
                     
@@ -1882,73 +1870,51 @@ private:
     
     */
     
+    std::string genConditionPathPyZ3() {
+        if (gloablPathConditions.empty()) {
+            return "# No path conditions\n";
+        }
+
+        // Copy stack and reverse to get outermost condition first
+        std::stack<PathCondition> temp = gloablPathConditions;
+        std::vector<PathCondition> conditions;
+        while (!temp.empty()) {
+            conditions.push_back(temp.top());
+            temp.pop();
+        }
+        std::reverse(conditions.begin(), conditions.end());
+
+        std::string result = "s = Solver()\n";
+        for (const auto& pc : conditions) {
+            result += "s.add(" + pc.getPyz3smtStringExpressionWithSafetyAssertion() + ")\n";
+        }
+        return result;
+    }
+
     std::string  genVariableDeclarationPyZ3(){
         std::string fullDeclaration="";
         for (const auto& ssaName : relevantVariables) {
-            
-            //llvm::outs() << "Relevant var: " << ssaName ;
             auto it = varDefs.find(ssaName);
             if (it != varDefs.end()) {
                 const DefinitionInfo& def = it->second;
                 fullDeclaration=fullDeclaration+def.getPyZ3Declaration();
                 pythonScript.pushIfNotInDeclarationVector(def.getPyZ3Declaration());
-
             }else{
                 cout<<" didn't find ssa var in varDefs \n";
             }
             fullDeclaration=fullDeclaration+"\n";
-            
+        }
+        // Declare fresh overflow variables (k1, xbar1, etc.) generated during definitions
+        for (const auto& freshVar : freshVarNames) {
+            std::string decl = freshVar + " = Int('" + freshVar + "')";
+            fullDeclaration = fullDeclaration + decl + "\n";
+            pythonScript.pushIfNotInDeclarationVector(decl);
         }
         return fullDeclaration;
     }
 
 // my version 08/03/2026 up to
-    /* std::string  genVariableDefinitionPyZ3(){
-        //TODO  need to fix order of variables definition in python script
-        std::string fullDefinition="";
-        
-        for (const auto& ssaName : relevantVariables) {
-            std::string condExpression="";
-            //llvm::outs() << "Relevant var: " << ssaName ;
-            auto it = varDefs.find(ssaName);
-            if (it != varDefs.end()) {
-                
-                const DefinitionInfo& def = it->second;
-                
-
-                if( !def.isCondtionalDefinition ){
-                    fullDefinition= fullDefinition + ssaName +" = "+ def.smtDefinitionExpression;
-                     
-                }else{ 
-                    if(def.globalConditionContext.size()>1){
-                        condExpression="And( ";
-                        for(size_t i = 0; i < def.globalConditionContext.size() - 1; i++) {
-                            condExpression=condExpression+(def.globalConditionContext[i]).getPyz3smtStringExpression() +", ";
-                        }
-                        condExpression=condExpression+(def.globalConditionContext[def.globalConditionContext.size()-1]).getPyz3smtStringExpression()+" )";
-
-                    }else{
-                        condExpression= def.globalConditionContext[0].getPyz3smtStringExpression();
-                        //handle only one cond stmt
-                    }
-                    string rollBackSsaName=std::to_string(def.ssaVar.version - 1);
-                    fullDefinition = fullDefinition + ssaName + " = " + "If( " + condExpression + ", " + def.smtDefinitionExpression + ", " + def.ssaVar.name + "_" + rollBackSsaName + ")";
-                    //relevantVariables.insert(rollBackSsaName);
-
-                }
-                
-            }else{
-                cout<<" didn't find ssa var in varDefs \n";
-            }
-            fullDefinition=fullDefinition+"\n";
-            
-        }
-        return fullDefinition;
-    }
-    
-
-*/
-   
+ 
 
 std::string genVariableDefinitionPyZ3() {
     std::set<std::string> allVariables;
@@ -2057,11 +2023,11 @@ std::string genVariableDefinitionPyZ3() {
                     condExpression = "And( ";
                     for (size_t i = 0; i < def.globalConditionContext.size(); i++) {
                         if (i > 0) condExpression += ", ";
-                        condExpression += def.globalConditionContext[i].getPyz3smtStringExpression();
+                        condExpression += def.globalConditionContext[i].getPyz3smtStringExpressionWithSafetyAssertion();
                     }
                     condExpression += " )";
                 } else if (def.globalConditionContext.size() == 1) {
-                    condExpression = def.globalConditionContext[0].getPyz3smtStringExpression();
+                    condExpression = def.globalConditionContext[0].getPyz3smtStringExpressionWithSafetyAssertion();
                 }
                 
                 std::string rollBackSsaName = def.ssaVar.name + "_" + std::to_string(def.ssaVar.version - 1);
