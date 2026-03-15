@@ -51,7 +51,7 @@ public:
 
     if((visitor.targetPoint).globalTargetStmt!=NULL){
       auto stratChronoFindParent = high_resolution_clock::now();
-    (visitor.targetPoint).findParentStmt((visitor.targetPoint).globalTargetStmt, false);
+    (visitor.targetPoint).findParentStmt((visitor.targetPoint).globalTargetStmt);//, false);
     auto endChronoFindParent = high_resolution_clock::now();
     
     cout<<"\n\n *** Condition path *** \n\n";

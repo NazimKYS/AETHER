@@ -82,6 +82,7 @@
 #include "clang/Frontend/Utils.h"
 
 #include <chrono>
+#include <queue>
 
 using namespace std;
 using json = nlohmann::json;

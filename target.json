@@ -1,9 +1,14 @@
 {
-  "target":33,
+  "target":39,
   "constraints": [
     "uid_sid>0",
     "uid_sid<10000000000"
   ],
-  "dump": "foo",
-  "desired_target": "_,_,_"
+  "executionEnv": {
+    "Arch":"",
+    "OS":"",
+    "compiler":"",
+    "flags":[]
+  },
+  "dump": "foo"
 }

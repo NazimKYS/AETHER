@@ -124,7 +124,7 @@ Stmt *globalScopeTargetStmt;
 
 TrackedVariables targetVariableUidSid;
 std::vector<const Stmt *> AllVariablesStmt = {};
-unsigned int sourceLineFromArg;
+unsigned int sourceLineOfTargetStmt;
 string targetJsonFile;
 
 
@@ -252,12 +252,12 @@ int main(int argc, const char **argv) {
     string filePath = argv[2];
     targetJsonFile = filePath.substr(filePath.find_last_of("/\\") + 1);
     cout << "file name : " << targetJsonFile << "\n";
-    sourceLineFromArg = getTargetInstructionSourceLine(targetJsonFile);
+    sourceLineOfTargetStmt = getTargetInstructionSourceLine(targetJsonFile);
     
 
   }else{
     cout<<"not enough argument\n";
-    sourceLineFromArg = 22;
+    sourceLineOfTargetStmt = 22;
   }
  //cl::ParseCommandLineOptions(argc, argv, "My simple driver\n");
 
