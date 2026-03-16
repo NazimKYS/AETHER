@@ -30,260 +30,6 @@ public:
 private:
     std::unordered_map<std::string, int> freshVarCounters;
 };
-class BinaryNodeTool {
-public:
-    const Stmt* dataNodeElement = nullptr;
-    BinaryNodeTool* leftNode = nullptr;
-    BinaryNodeTool* rightNode = nullptr;
-    
-    bool isBinaryNode = false;      // 🔴 MUST initialize ALL booleans!
-    bool isUnaryNode = false;
-    bool isFakeNode = false;
-    bool isLeafNode = false;
-    bool isExplicitCast = false;    // 🔵 NEW: Track explicit casts for safety assertions
-    
-    std::string typeNode;
-    std::string typeLeafNode;
-    std::string castKind;           // 🔵 NEW: "truncation", "sign-conversion", etc.
-
-    // Fake node constructor (for logical NOT, etc.)
-    BinaryNodeTool(std::string typenode, BinaryNodeTool* node) 
-        : isFakeNode(true), typeNode(typenode), rightNode(node) {}
-
-    // Main constructor from Clang AST
-    BinaryNodeTool(const Stmt* clangStmt) 
-        : dataNodeElement(clangStmt)
-    {
-        if (!clangStmt) return;
-
-        // 🔵 STEP 1: Handle EXPLICIT casts FIRST (preserve for safety analysis)
-        if (auto* cStyleCast = dyn_cast<CStyleCastExpr>(clangStmt)) {
-            isUnaryNode = true;
-            isExplicitCast = true;
-            
-            // 🔍 CLASSIFY CAST SAFETY RISK (core of your knowledge base)
-            castKind = classifyCastRisk(
-                cStyleCast->getSubExpr()->getType(),
-                cStyleCast->getType()
-            );
-            
-            // Recursively build tree for cast operand (stripping implicit casts inside)
-            rightNode = new BinaryNodeTool(cStyleCast->getSubExpr());
-            return;
-        }
-
-        // 🔵 STEP 2: Handle BINARY operators
-        if (auto* binOp = dyn_cast<BinaryOperator>(clangStmt)) {
-            isBinaryNode = true;
-            leftNode = new BinaryNodeTool(binOp->getLHS());   // Implicit casts stripped recursively
-            rightNode = new BinaryNodeTool(binOp->getRHS());
-            return;
-        }
-
-        // 🔵 STEP 3: Handle UNARY operators & transparent wrappers
-        if (auto* parenExpr = dyn_cast<ParenExpr>(clangStmt)) {
-            isUnaryNode = true;
-            rightNode = new BinaryNodeTool(parenExpr->getSubExpr());
-            return;
-        }
-        if (auto* unaryOp = dyn_cast<UnaryOperator>(clangStmt)) {
-            isUnaryNode = true;
-            rightNode = new BinaryNodeTool(unaryOp->getSubExpr());
-            return;
-        }
-        if (auto* impCast = dyn_cast<ImplicitCastExpr>(clangStmt)) {
-            // 🔴 STRIP IMPLICIT CASTS TRANSPARENTLY (no safety risk)
-            // Just unwrap and continue building tree from sub-expression
-            new (this) BinaryNodeTool(impCast->getSubExpr());  // Placement new to reuse this object
-            return;
-        }
-
-        // 🔵 STEP 4: Handle LEAF nodes
-        isUnaryNode = true;
-        isLeafNode = true;
-
-        if (auto* dre = dyn_cast<DeclRefExpr>(clangStmt)) {
-            typeLeafNode = "var";
-            if (auto* vd = dyn_cast<VarDecl>(dre->getDecl())) {
-                // 🔵 SSA VERSIONING (critical for your knowledge base)
-                typeLeafNode = vd->getNameAsString() + "_" + 
-                               std::to_string(getCurrentSsaVersionOfVariable(vd->getNameAsString()));
-            }
-            return;
-        }
-        if (auto* intLit = dyn_cast<IntegerLiteral>(clangStmt)) {
-            typeLeafNode = "lit";
-            FullSourceLoc startLocation = sharedASTContext->getFullLoc(intLit->getBeginLoc());
-            SourceRange sr = intLit->getSourceRange();
-            const SourceManager& srcMgr = sharedASTContext->getSourceManager();
-            typeLeafNode = std::string(get_source_text(sr, srcMgr));
-            return;
-        }
-        if (auto* floatLit = dyn_cast<FloatingLiteral>(clangStmt)) {
-            typeLeafNode = "lit";
-            // Extract floating value as string
-            llvm::SmallString<16> floatStr;
-            floatLit->getValue().toString(floatStr);
-            typeLeafNode = std::string(floatStr);
-            return;
-        }
-        if (auto* charLit = dyn_cast<CharacterLiteral>(clangStmt)) {
-            typeLeafNode = "lit";
-            typeLeafNode = "'" + std::string(1, static_cast<char>(charLit->getValue())) + "'";
-            return;
-        }
-
-        // 🔵 STEP 5: Fallback for truly unsupported nodes (safe!)
-        typeLeafNode = "<" + std::string(clangStmt->getStmtClassName()) + ">";
-    }
-
-    
-    
-    // 🔍 CAST SAFETY CLASSIFIER (minimal working version)
-    std::string classifyCastRisk(QualType srcTy, QualType dstTy) const {
-        srcTy = srcTy.getCanonicalType();
-        dstTy = dstTy.getCanonicalType();
-
-        // Helper to get signedness and bit width WITHOUT lambdas
-        auto getIntInfo = [](QualType ty, ASTContext* astCtx) -> std::pair<bool, unsigned> {
-            if (auto* bt = dyn_cast<BuiltinType>(ty.getTypePtr())) {
-                switch (bt->getKind()) {
-                    // Signed types
-                    case BuiltinType::Char_S: case BuiltinType::SChar:
-                    case BuiltinType::Short: case BuiltinType::Int:
-                    case BuiltinType::Long: case BuiltinType::LongLong:
-                        return {true, astCtx->getTypeSize(ty)};
-                    // Unsigned types
-                    case BuiltinType::Char_U: case BuiltinType::UChar:
-                    case BuiltinType::UShort: case BuiltinType::UInt:
-                    case BuiltinType::ULong: case BuiltinType::ULongLong:
-                        return {false, astCtx->getTypeSize(ty)};
-                    default: break;
-                }
-            }
-            return {false, 0};
-        };
-
-        auto [srcSigned, srcBits] = getIntInfo(srcTy, sharedASTContext);
-        auto [dstSigned, dstBits] = getIntInfo(dstTy, sharedASTContext);
-
-        // 🔒 SAFETY RULES FOR YOUR KNOWLEDGE BASE
-        if (srcBits > dstBits) {
-            return "truncation";  // HIGH RISK: int → char
-        }
-        if (srcSigned != dstSigned) {
-            if (srcSigned && !dstSigned && srcBits >= dstBits) {
-                return "sign-to-unsigned";  // MEDIUM RISK
-            }
-            if (!srcSigned && dstSigned && srcBits > dstBits) {
-                return "unsigned-to-signed-trunc";  // HIGH RISK
-            }
-            return "sign-conversion";
-        }
-        if (srcBits < dstBits) {
-            return "safe-promotion";  // LOW RISK
-        }
-        return "identity";
-    }
-
-
-
-
-
-    // Helper to get bit width from ASTContext
-    unsigned getContextBitWidth(QualType ty) const {
-        return sharedASTContext->getTypeSize(ty);
-    }
-
-    // 🔵 FLATTENER (updated to handle explicit casts)
-    std::string pyz3ApiFlatten() const {
-        static thread_local int depth = 0;
-        depth++;
-
-        std::string outputStr;
-
-        // 🔵 HANDLE EXPLICIT CASTS (preserve for safety assertions)
-        if (isExplicitCast) {
-            std::string operand = rightNode ? rightNode->pyz3ApiFlatten() : "<null>";
-            
-            // 🔍 Z3-FRIENDLY CAST MODELING BASED ON SAFETY CLASSIFICATION
-            if (castKind == "truncation") {
-                // Example: truncate 32-bit int to 8-bit → extract lower 8 bits
-                outputStr = "Extract(7, 0, " + operand + ")";
-            }
-            else if (castKind == "sign-to-unsigned") {
-                // Model as unsigned interpretation
-                outputStr = "ToUnsigned(" + operand + ")";
-            }
-            else if (castKind == "safe-promotion") {
-                // No-op for Z3 (just pass through)
-                outputStr = operand;
-            }
-            else {
-                // Generic annotation for knowledge base to interpret later
-                outputStr = "Cast<" + castKind + ">(" + operand + ")";
-            }
-            depth--;
-            return outputStr;
-        }
-
-        // 🔵 HANDLE BINARY OPERATORS
-        if (isBinaryNode && dataNodeElement) {
-            if (auto* binOp = dyn_cast<BinaryOperator>(dataNodeElement)) {
-                std::string opStr = binOp->getOpcodeStr().str();
-                std::string leftStr = leftNode ? leftNode->pyz3ApiFlatten() : "<null-left>";
-                std::string rightStr = rightNode ? rightNode->pyz3ApiFlatten() : "<null-right>";
-
-                if (opStr == "&&" || opStr == "||") {
-                    std::string opCode = (opStr == "&&") ? "And" : "Or";
-                    outputStr = opCode + "(\n\t" + leftStr + " ," + rightStr + "\n )";
-                } else {
-                    outputStr = "( " + leftStr + " " + opStr + " " + rightStr + " )";
-                }
-                depth--;
-                return outputStr;
-            }
-        }
-
-        // 🔵 HANDLE UNARY OPERATORS & LEAVES
-        if (isUnaryNode) {
-            if (auto* unaryOp = dyn_cast_or_null<UnaryOperator>(dataNodeElement)) {
-                std::string opStr = unaryOp->getOpcodeStr(unaryOp->getOpcode()).str();
-                std::string subExpr = rightNode ? rightNode->pyz3ApiFlatten() : "<null>";
-
-                if (opStr == "!") {
-                    outputStr = "Not(" + subExpr + ")";
-                }
-                else if (opStr == "-") {
-                    outputStr = "-" + subExpr;  // Clean negation formatting
-                }
-                else {
-                    outputStr = opStr + "(" + subExpr + ")";
-                }
-                depth--;
-                return outputStr;
-            }
-
-            // Leaf nodes or other unary expressions
-            if (!typeLeafNode.empty()) {
-                outputStr = typeLeafNode;
-            } else if (rightNode) {
-                outputStr = rightNode->pyz3ApiFlatten();
-            } else {
-                outputStr = "<unsupported:" + 
-                            (dataNodeElement ? std::string(dataNodeElement->getStmtClassName()) : "null") + 
-                            ">";
-            }
-            depth--;
-            return outputStr;
-        }
-
-        // Fallback
-        outputStr = isFakeNode ? ("<fake:" + typeNode + ">") : "Oops";
-        depth--;
-        return outputStr;
-    }
-};
 
 struct PathCondition;
 // Replace your current SSAVariable struct with this
@@ -379,8 +125,6 @@ struct DefinitionInfo {
 
     const clang::Stmt* defStmt = nullptr;
     
-    // The statement itself
-    //BinaryNodeTool *binaryExpression=nullptr;
     string smtDefinitionExpression;
 
 
@@ -425,41 +169,19 @@ struct DefinitionInfo {
           conditionContext(conditionContext), 
           defStmt(defStmt)
     {
-        //testing binaryNodeElement
-        // BinaryNodeTool binaryExpression(defStmt);
-        // cout<< "Testing BinaryNodeTool : "<<binaryExpression.pyz3ApiFlatten()<<"\n";
-
-        // std::cerr << "DEBUG: Processing '" << ssaVar.name 
-        //       << "' with defStmt=" << (void*)defStmt << std::endl;
-
         if (!defStmt) {
-            std::cerr << "  → defStmt is NULL, skipping BinaryNodeTool" << std::endl;
             return;
         }
-
-        // std::cerr << "  → Stmt class: " << defStmt->getStmtClassName() << std::endl;
 
         // ONLY proceed if BinaryOperator (or other explicitly supported types)
         if (!llvm::isa<clang::BinaryOperator>(defStmt)) {
-            std::cerr << "  → NOT a BinaryOperator, skipping BinaryNodeTool" << std::endl;
             return;
         }
 
-        //std::cerr << "  → Creating BinaryNodeTool..." << std::flush;
-        //BinaryNodeTool binaryExpression(defStmt);  // ← Crash likely HERE for uid_sid
         const BinaryOperator *binOpStmt=dyn_cast<BinaryOperator>(defStmt);
             //Expr *lhs = (binOpStmt->getLHS())->IgnoreImpCasts();
         const Expr *rhs = (binOpStmt->getRHS())->IgnoreImpCasts();
-        BinaryNodeTool binaryExpression(rhs);
         
-        //std::cerr << "  → Calling pyz3ApiFlatten()..." << std::flush;
-        std::string result = binaryExpression.pyz3ApiFlatten();  // ← OR crash HERE
-        
-        //std::cout << "BinaryNodeTool: " << ssaVar.ssaName() <<" = " <<  result << std::endl;
-        /*smtDefinitionExpression = result;//ssaVar.ssaName() + " = " +  result;
-        cout<<"@@@@@@@@@@@@@@@@@@@@@@@\n Testing handleArithmeticWithOverflow vs pyz3ApiFlatten:\n"<< handleArithmeticWithOverflow(rhs) <<" \n VS\n"<< result <<"\n @@@@@@@@@@@@@@@@@@@@@@@ \n";
-        */
-        //replacing binaryExpression.pyz3ApiFlatten() with handleArithmeticWithOverflow after successful test
         smtDefinitionExpression = handleArithmeticWithOverflow(rhs);
 
        
@@ -480,19 +202,7 @@ struct DefinitionInfo {
         
         string def ="#NULL not handled data type or Conditional Def"+ varType;
         string ssaName = ssaVar.ssaName();
-        def = smtDefinitionExpression   ;  
-        // if( !isCondtionalDefinition ){
-
-        // }else{ 
-
-        //     //need to handle assignment
-
-        //     //hand subexpr of rhs
-        //     //smtDefinitionExpression="";
-            
-        // }
-        
-               
+        def = smtDefinitionExpression   ;
         return def;
     }
 
@@ -672,18 +382,12 @@ struct DefinitionInfo {
 std::unordered_map<std::string, DefinitionInfo> varDefs;
 
 int getCurrentSsaVersionOfVariable(string baseName){
-    int currentVersion=-1;
-    std::string latestSSA = "";
-        
-        for (const auto& [ssaName, def] : varDefs) {
-            if (def.ssaVar.name == baseName) {
-                if (def.ssaVar.version > currentVersion) {
-                    currentVersion = def.ssaVar.version;
-                    latestSSA = ssaName;
-                }
-            }
-        }
-        return currentVersion;
+    int currentVersion = -1;
+    for (const auto& [ssaName, def] : varDefs) {
+        if (def.ssaVar.name == baseName && def.ssaVar.version > currentVersion)
+            currentVersion = def.ssaVar.version;
+    }
+    return currentVersion;
 }
 
 
@@ -755,13 +459,7 @@ struct PathCondition {
         : conditionExpr(condExpr),
           isTrueBranch(trueBranch),
           ssaUsedVars(std::move(usedVars))  // Efficient move
-    {
-        smtString="";
-        BinaryNodeTool binaryExpression(condExpr);
-        smtString = binaryExpression.pyz3ApiFlatten();
-        smtStringWithSafetyAssertion = DefinitionInfo::handleArithmeticWithOverflow(condExpr);
-
-    }
+    {}
     void printUsedVars() const {
         std::cout << "SSA vars (" << ssaUsedVars.size() << "): ";
         for (size_t i = 0; i < ssaUsedVars.size(); ++i) {
@@ -785,21 +483,17 @@ struct PathCondition {
 class TargetProgramPoint {
     
 private:
-    //SSASymbolTable symtab;
     std::unordered_map<unsigned, std::vector<DefinitionInfo>> lineToDefinitions;
-    // make it global // std::unordered_map<std::string, DefinitionInfo> varDefs;
     std::stack<std::string> conditionStack;  
 public:
     const Stmt *globalTargetStmt;
     ASTContext *globalAstContext;
-    std::vector<StmtAttributes> vectorOfParentStmt = {};
     const FunctionDecl *parentFunctionOfProgramPoint;
     std::set<std::string> variablesRelatedToTargetStmt;
-    // Add to your class:
     bool targetFound = false;
     std::vector<std::string> getCurrentPathConditions() const;
     std::set<std::string> relevantVariables;
-    std::stack<PathCondition> gloablPathConditions; // ← NEW
+    std::stack<PathCondition> gloablPathConditions;
     SmtScript pythonScript;
 
 
@@ -816,115 +510,18 @@ public:
 
     void findParentStmt(const Stmt *s) {
         if (!s) return;
-        
         const auto &parents = globalAstContext->getParents(*s);
-        
-        if (parents.empty()) {
-            llvm::outs() << "Reached root, found " << vectorOfParentStmt.size() << " parents\n";
-            return;
-        }
-        
-        // Get the first parent (usually the immediate parent)
+        if (parents.empty()) return;
         const auto &firstParent = *parents.begin();
-        llvm::outs() << "Current Node Kind: " << firstParent.getNodeKind().asStringRef() << "\n";
-        
-        // Check if parent is a FunctionDecl
         if (const FunctionDecl *funcDecl = firstParent.get<FunctionDecl>()) {
             parentFunctionOfProgramPoint = funcDecl;
-            return; // Stop at function boundary
+            return;
         }
-        
-        // If parent is a Stmt, add it and continue
         if (const Stmt *parentStmt = firstParent.get<Stmt>()) {
-            StmtAttributes parentAttr = StmtAttributes(parentStmt->getID(*globalAstContext), parentStmt);
-            vectorOfParentStmt.push_back(parentAttr);
-            findParentStmt(parentStmt); // Continue recursion
+            findParentStmt(parentStmt);
         }
-        // If parent is neither FunctionDecl nor Stmt, stop
     }   
 
-
-    void getConditionPathV2() {
-    cout<<"running getConditionPathV2 here\n";
-    ASTContext *astContext = globalAstContext;
-
-    const SourceManager &srcMgr = astContext->getSourceManager();
-
-    const Expr *condition;
-    std::string expression = "";
-    std::vector<std::string> allExpressions = {};
-
-    std::string condState = "";
-    //pathConditions.clear();
-    for (unsigned int i = 0; i < vectorOfParentStmt.size(); ++i) {
-      //cout<<" for loop getConditionPath index "<<i<<" \n";
-      const Stmt *st = vectorOfParentStmt[i].st;
-      if (isa<IfStmt>(st)) {
-        const IfStmt *ifStmt = cast<IfStmt>(st);
-        condition = ifStmt->getCond();
-        condition->dump();
-        if (!condition) continue;
-
-        bool isTrueBranch = false;
-        //checking condition state disable comment after mapping new nodes of dataStructure
-        
-        if ( vectorOfParentStmt.size()> (i - 1) ) {
-          StmtAttributes nextStmt = vectorOfParentStmt[i - 1];
-          if (nextStmt.id == (ifStmt->getThen())->getID(*globalAstContext)) {
-            // comment line 260 & 266
-            //cout<<"vectorSize = "<<vectorOfParentStmt.size()<<" access element vector[ "<<i - 1 <<" ]\n";
-            condState = "";
-            isTrueBranch = true;
-            //listOfAtomicElements.push_back(AtomicElementOfConditionPath("unaryOp","Not Not"));
-
-          }
-          if(ifStmt->getElse()){
-            if(nextStmt.id == (ifStmt->getElse())->getID(*globalAstContext)) {
-                condState = "Not";
-                isTrueBranch = false;
-                //listOfAtomicElements.push_back(AtomicElementOfConditionPath("unaryOp","Not"));
-            }
-          }
-          
-        } // check if we are in the block of then or in the else block
-       
-        std::vector<std::string> vars;
-        collectUsedVarsFromCondPath(const_cast<clang::Expr*>(condition), vars);  // ✅ Called on 'this' instance
-
-        // Now construct with precomputed data
-        //PathCondition pc(condition, isTrueBranch, vars);
-       
-        // pc.conditionExpr = condition;
-        // pc.isTrueBranch = isTrueBranch;
-
-        const Stmt *conditionStmt= ifStmt->getCond(); 
-        if(condState=="Not"){
-          
-          NodeTool *tree = new NodeTool(conditionStmt);
-          NodeTool root(condState,tree);
-          //cout<<"roooooooooooooot Not \n"<<root.pyz3ApiFlatten()<<"\n";
-          //pc.smtString = root.pyz3ApiFlatten();
-        }else{
-          //NodeTool *tree = new NodeTool(conditionStmt); /* to avoid ==10661==ERROR: LeakSanitizer: detected memory leaks Direct leak of 96 byte(s) in 1 object(s) allocated from:    1 0x5d81cfdda85a in TargetProgramPoint::getConditionPathV2() src/TargetProgramPoint.cpp:315 */
-          NodeTool tree(conditionStmt);
-          //cout<<"roooooooooooooot true \n"<<tree.pyz3ApiFlatten()<<"\n";
-          //pc.smtString = tree.pyz3ApiFlatten();
-          
-        }
-        //pathConditions.push_back(pc);
-        //pc.printUsedVars();
-        binaryOpToStrV2(conditionStmt,globalAstContext);
-        
-        // testing binaryStrV2 
-        /*
-        allExpressions.push_back(
-            condState + "( " +  binaryOpToStr(conditionStmt, srcMgr, globalAstContext)  + " )");
-        //cout<<"allexpression size"<< allExpressions.size()<<"\n";*/
-      }  
-    }
-
-  }
-  
 
     bool VisitBinaryOperator(BinaryOperator* binOp, const Stmt* originalStmt = nullptr) {
         if (binOp->isAssignmentOp()) {
@@ -939,47 +536,7 @@ public:
                 }
                 // Collect used variables (you'll need to pass current path state)
                 std::vector<string> usedVars;
-                collectUsedVars(rhs, usedVars); // heere we have  Update this later if needed
-                llvm::outs() << "DEBUG: For " << varName << ", usedVars: ";
-                for (const auto& used : usedVars) {
-                    llvm::outs() << used << " ";
-                }
-                llvm::outs() << "\n";
-                // Create substituted RHS string
-                std::string rawRHS;
-                llvm::raw_string_ostream ss(rawRHS);
-                rhs->printPretty(ss, nullptr, globalAstContext->getPrintingPolicy()); //str definition
-                ss.flush();
-
-                std::string substituted = ss.str();
-                //substitute varibales names with their ssa version in definition expression, can be optimized
-                std::vector<SSAVariable> usedSsaVars ={};
-                // Sort variables by length (longest first) to avoid partial matches
-                // getSSAvariable from symbol table using ssaVarName:
-                for (const auto& var : usedVars) {
-                    auto it = varDefs.find(var);
-                    if (it != varDefs.end()) {
-                        const DefinitionInfo& def = it->second;
-                        usedSsaVars.push_back(def.ssaVar);
-                    }
-
-                
-                } 
-                for (const auto& used : usedSsaVars) {
-                    std::string orig = used.name; // Use baseName now
-                    std::string versioned = used.ssaName();
-                    size_t pos = 0;
-                    while ((pos = substituted.find(orig, pos)) != std::string::npos) {
-                        bool leftOK = (pos == 0 || !isalnum(substituted[pos - 1]));
-                        bool rightOK = (pos + orig.size() >= substituted.size() || !isalnum(substituted[pos + orig.size()]));
-                        if (leftOK && rightOK) {
-                            substituted.replace(pos, orig.length(), versioned);
-                            pos += versioned.length();
-                        } else {
-                            pos += orig.length();
-                        }
-                    }
-                }
+                collectUsedVars(rhs, usedVars);
 
                 // Get current path conditions
                 std::vector<std::string> currentPathConditions;
@@ -989,14 +546,8 @@ public:
                     tmpStack.pop();
                 }
 
-                SSAVariable newDef(
-                    varName, 
-                    substituted, 
-                    rhs, 
-                    currentPathConditions
-                );
+                SSAVariable newDef(varName);
 
-                // Rest of your code remains the same...
                 FullSourceLoc fullLoc = globalAstContext->getFullLoc(binOp->getExprLoc());
                 unsigned line = fullLoc.getSpellingLineNumber();
                 unsigned stmtID = reinterpret_cast<uintptr_t>(binOp);
@@ -1005,18 +556,14 @@ public:
 
 
 
-                // You can still store in varDefs if needed for debugging
                 DefinitionInfo info(newDef,
                     line,
                     stmtID,
                     varTypeStr,
-                    newDef.ssaName() + " = " + substituted,
+                    "",
                     usedVars,
                     currentPathConditions,
-                    //rhs,
-                    //nullptr,
                     binOp);
-                    //originalStmt ? originalStmt : binOp); //= {           };
                 info.copyCondPathFromstackToVector(gloablPathConditions);
                 
                 lineToDefinitions[line].push_back(info);
@@ -1054,51 +601,6 @@ public:
         }
     }
 
-    void collectUsedVarsFromCondPath(Expr* expr, std::vector<std::string>& out) {
-
-        
-        if(isa<DeclRefExpr>(expr)){
-            DeclRefExpr *dre = dyn_cast<DeclRefExpr>(expr);
-            if (VarDecl *VD = dyn_cast<VarDecl>(dre->getDecl())) {
-                std::string name = dre->getNameInfo().getAsString();
-                cout<< "&&&& collectUsedVarsFromCondPath current name : "<<name <<"\n";
-                out.push_back(findLatestSSAName(name));
-
-            }
-        }else if(isa<ParenExpr>(expr)){
-            ParenExpr *parenExpr= dyn_cast<ParenExpr>(expr);
-            if(isa<BinaryOperator>(dyn_cast<BinaryOperator>(parenExpr->getSubExpr()))){
-                BinaryOperator *binOpStmt=dyn_cast<BinaryOperator>(parenExpr->getSubExpr());
-                collectUsedVarsFromCondPath(dyn_cast<Expr>(binOpStmt),out);
-            }
-            
-        }else if(isa<BinaryOperator>(expr)){
-            BinaryOperator *binOpStmt=dyn_cast<BinaryOperator>(expr);
-            Expr *lhs = (binOpStmt->getLHS())->IgnoreImpCasts();
-            Expr *rhs = (binOpStmt->getRHS())->IgnoreImpCasts();
-            collectUsedVarsFromCondPath(rhs,out);
-            collectUsedVarsFromCondPath(lhs,out);
-            
-            
-        }else if(isa<ImplicitCastExpr>(expr)){
-            Expr *SkipingImplicitCast= (dyn_cast<ImplicitCastExpr>(expr))->IgnoreImpCasts();
-            collectUsedVarsFromCondPath(SkipingImplicitCast,out);
-        
-        }else if(isa<CStyleCastExpr>(expr)){
-            Expr *subExpr= (dyn_cast<CStyleCastExpr>(expr))->getSubExpr();
-            collectUsedVarsFromCondPath(subExpr,out);
-        
-        }else if(isa<MemberExpr>(expr)){
-            Expr *SkipingImplicitCast= (dyn_cast<ImplicitCastExpr>(expr))->IgnoreImpCasts();
-            collectUsedVarsFromCondPath(SkipingImplicitCast,out);
-        
-        }else{/*
-            logFile<<" extractUsedVariables : " <<(dyn_cast<Stmt>(expr))->getStmtClassName()<<"\n";
-            cout<<" extractUsedVariables : " <<(dyn_cast<Stmt>(expr))->getStmtClassName()<<"\n";
-            //expr->dump();
-            cout<<"not decl ref\n";*/
-        }
-    }
 
 
     
@@ -1203,6 +705,9 @@ public:
         cout<<"\n\n# *** Condition path *** \n\n";
         cout<<genConditionPathPyZ3();
 
+        cout<<"\n\n# *** User constraints *** \n\n";
+        cout<<genConstraintsPyZ3();
+
         cout<<"\n\n# *** Checking satisfiability and getting models *** \n\n";
         cout<<"print(s.check())\n";
         cout<<"if(s.check()==sat):\n";
@@ -1272,19 +777,15 @@ public:
             lineToDefinitions[line].push_back(condInfo);
             varDefs[condVar.ssaName()] = condInfo;
 
-            std::vector<std::string> vars;
-            collectUsedVarsFromCondPath(condExpr, vars);  // ✅ Called on 'this' instance
-
             // Compute safety-annotated condition BEFORE any branch traversal
             // (same SSA state as rewrittenCond — avoids stale version lookups)
             std::string safetyCondText = DefinitionInfo::handleArithmeticWithOverflow(condExpr);
 
             if (const Stmt* thenBody = ifStmt->getThen()) {
                 conditionStack.push(rewrittenCond);
-                PathCondition pc(condExpr, true, vars);
+                PathCondition pc(condExpr, true, usedVars);
                 pc.smtString=rewrittenCond;
                 pc.smtStringWithSafetyAssertion = safetyCondText;
-                pc.printUsedVars();
                 gloablPathConditions.push(pc);
                 if (visitAllStmts(thenBody)) return true;
                 conditionStack.pop();
@@ -1293,7 +794,7 @@ public:
 
             if (const Stmt* elseBody = ifStmt->getElse()) {
                 conditionStack.push("Not(" + rewrittenCond + ")");
-                PathCondition pc(condExpr, false, vars);
+                PathCondition pc(condExpr, false, usedVars);
                 pc.smtString="Not(" + rewrittenCond + ")";
                 pc.smtStringWithSafetyAssertion = "Not(" + safetyCondText + ")";
                 pc.printUsedVars();
@@ -1318,25 +819,6 @@ public:
 
         return false;
     }
-
-    // void printPathConditions() {
-    //     if (pathConditions.empty()) {
-    //         llvm::outs() << "No path conditions.\n";
-    //         return;
-    //     }
-
-        
-    //     for (size_t i = 0; i < pathConditions.size(); ++i) {
-    //         const auto& pc = pathConditions[i];
-    //         llvm::outs()  << pc.smtString <<  "\n";
-    //         /*if(pc.isTrueBranch){ 
-    //         llvm::outs()  << "(" << pc.smtString << ") \n";
-    //         }else{
-    //         llvm::outs()  << "Not(" << pc.smtString << ") \n";
-    //         }*/
-            
-    //     }
-    // } 
 
 
 
@@ -1625,19 +1107,9 @@ private:
         return ssaName;
     }
     std::string findLatestSSAName(const std::string& baseName) const {
-        int maxVersion = -1;
-        std::string latestSSA = "";
-        
-        for (const auto& [ssaName, def] : varDefs) {
-            if (def.ssaVar.name == baseName) {
-                if (def.ssaVar.version > maxVersion) {
-                    maxVersion = def.ssaVar.version;
-                    latestSSA = ssaName;
-                }
-            }
-        }
-        
-        return latestSSA;
+        int v = getCurrentSsaVersionOfVariable(baseName);
+        if (v < 0) return "";
+        return baseName + "_" + std::to_string(v);
     }
    
 
@@ -1651,24 +1123,20 @@ private:
         tempStack.pop();
     }
     std::reverse(context.targetPathConditions.begin(), context.targetPathConditions.end());
-    
-    // DEBUG: Print target statement info
-    llvm::outs() << "DEBUG: Target statement type: " << globalTargetStmt->getStmtClassName() << "\n";
-    
+
     // Find the actual assignment statement if we have a literal
     const clang::Stmt* actualTarget = globalTargetStmt;
-    
+
     // If target is a literal, try to find its parent assignment
-    if (isa<clang::IntegerLiteral>(globalTargetStmt) || 
+    if (isa<clang::IntegerLiteral>(globalTargetStmt) ||
         isa<clang::FloatingLiteral>(globalTargetStmt) ||
         isa<clang::StringLiteral>(globalTargetStmt)) {
-        
-        llvm::outs() << "DEBUG: Target is a literal, searching for parent assignment...\n";
+
         // You'll need to implement parent lookup or store parent info
         // For now, we'll assume the target should be the assignment
         // This is a limitation of the current approach
     }
-    
+
     context.targetStmt = actualTarget;
     
     // Handle different target statement types
@@ -1682,7 +1150,6 @@ private:
     }
     else if (const auto* binOp = dyn_cast<clang::BinaryOperator>(actualTarget)) {
         // Handle assignments and other binary operations
-        llvm::outs() << "DEBUG: Found BinaryOperator\n";
         if (binOp->isAssignmentOp()) {
             // For assignments, the target variables are on the LHS
             extractVariablesFromExpr(binOp->getLHS(), context.targetVariables);
@@ -1696,11 +1163,9 @@ private:
     }
     else if (const auto* dre = dyn_cast<clang::DeclRefExpr>(actualTarget)) {
         // Handle variable references
-        llvm::outs() << "DEBUG: Found DeclRefExpr: " << dre->getNameInfo().getAsString() << "\n";
         context.targetVariables.push_back(dre->getNameInfo().getAsString());
     }
     else {
-        llvm::outs() << "DEBUG: Target is unsupported statement type!\n";
         // Try to extract variables anyway
         extractVariablesFromExpr(dyn_cast_or_null<clang::Expr>(actualTarget), context.targetVariables);
     }
@@ -1721,11 +1186,7 @@ private:
     }
     
     // Compute relevant variables
-    
-    
-    llvm::outs() << "DEBUG: About to compute relevant variables\n";
-    context.relevantVariables =  computeRelevantVariablesWithSSANames();//computeRelevantVariablesUsingSymtab();
-    llvm::outs() << "DEBUG: Finished computing relevant variables\n";
+    context.relevantVariables =  computeRelevantVariablesWithSSANames();
     
     return context;
 }
@@ -1833,43 +1294,6 @@ private:
         return info;
     }
 
-   /* void generatePyZ3(){
-      cout<< "\n\n\n******PyZ3 script generation *************\n\n\n";
-      string header="from z3 import *";
-      string varDeclarations="";
-      string conditionPath="";
-      string checkModels="";
-      string fullFile="";
-      generateSmtExpressions();
-      // missing all models 
-
-      for (TrackedVariables v : listOfUniqueVariables){
-          if(v.varType=="int" || v.varType=="long"){
-            varDeclarations=varDeclarations + v.varName + " = Int('"+ v.varName+"') \n";
-          }
-        }
-
-      //condition path initialisation
-      conditionPath="s = Solver()\n";
-      conditionPath=conditionPath+"s.add( ";
-      for(unsigned int i = 0; i < SmtConditionPathExpressions.size()-1; ++i)  {
-        string expr=SmtConditionPathExpressions[i];
-        conditionPath=conditionPath+ expr +", ";
-
-      }
-      conditionPath=conditionPath+SmtConditionPathExpressions[SmtConditionPathExpressions.size()-1]+ " )" ;
-      checkModels ="print(s.check()) \n";
-      checkModels=checkModels+"print(s.model()) \n";
-
-      fullFile=header+ "\n\n"+ varDeclarations + "\n\n" + conditionPath +"\n\n"+checkModels;
-
-    
-      cout<<fullFile;
-
-     }
-    
-    */
-    
     std::string genConditionPathPyZ3() {
         if (gloablPathConditions.empty()) {
             return "# No path conditions\n";
@@ -1887,6 +1311,17 @@ private:
         std::string result = "s = Solver()\n";
         for (const auto& pc : conditions) {
             result += "s.add(" + pc.getPyz3smtStringExpressionWithSafetyAssertion() + ")\n";
+        }
+        return result;
+    }
+
+    std::string genConstraintsPyZ3() {
+        if (sharedConstraints.empty()) return "";
+        std::string result;
+        for (const auto& uc : sharedConstraints) {
+            std::string ssaName = findLatestSSAName(uc.variable);
+            if (ssaName.empty()) ssaName = uc.variable;
+            result += "s.add(" + ssaName + " " + uc.op + " " + uc.value + ")\n";
         }
         return result;
     }
@@ -1913,8 +1348,6 @@ private:
         return fullDeclaration;
     }
 
-// my version 08/03/2026 up to
- 
 
 std::string genVariableDefinitionPyZ3() {
     std::set<std::string> allVariables;

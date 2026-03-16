@@ -1,14 +1,23 @@
 {
-  "target":39,
+  "target":30,
   "constraints": [
-    "uid_sid>0",
-    "uid_sid<10000000000"
+    {
+      "variable": "userId",
+      "operator": ">",
+      "value": 0
+    },
+    {
+      "variable": "userId",
+      "operator": "<",
+      "value": 150000000
+    }
   ],
   "executionEnv": {
-    "Arch":"",
+    "Arch":"x86",
     "OS":"",
     "compiler":"",
-    "flags":[]
+    "flags":[],
+    "triple":""
   },
   "dump": "foo"
 }

@@ -124,6 +124,30 @@ std::vector<TrackedVariables> AllTrackedVariables = {};
 ofstream logFile("LogTracking.txt");
 static int currentCallCounter=0;
 
+struct ExecutionEnv {
+    std::string arch;
+    std::string os;
+    std::string compiler;
+    std::vector<std::string> flags;
+    std::string triple;
+
+    bool isEmpty() const {
+        return arch.empty() && os.empty() && compiler.empty() && triple.empty();
+    }
+};
+
+ExecutionEnv sharedExecutionEnv;
+
+struct UserConstraint {
+    std::string variable;  // base variable name, e.g. "userId"
+    std::string op;        // ">", "<", ">=", "<=", "==", "!="
+    std::string value;     // right-hand side literal, e.g. "0", "150000000"
+};
+
+std::vector<UserConstraint> sharedConstraints;
+
+unsigned getBitWidthForType(clang::QualType ty, const ExecutionEnv& env);
+
 
 void pushIfNotInList(TrackedVariables var);
 void printListOfUniqueVariables();
