@@ -14,9 +14,13 @@ LDFLAGS += -L/usr/lib/llvm-18/lib -ldl -ltinfo -lpthread
 #COMMON_FLAGS=-Wall  -Wextra -fexceptions 
 COMMON_FLAGS= -Wextra -fexceptions 
 
+LLVM_PREFIX   := $(shell $(LLVM_CONFIG) --prefix)
+CLANG_VERSION := $(shell $(LLVM_CONFIG) --version | cut -d. -f1-2)
+
 CXXFLAGS+=$(COMMON_FLAGS) $(shell $(LLVM_CONFIG) --cxxflags)
 CPPFLAGS+=$(shell $(LLVM_CONFIG) --cppflags) -I$(SOURCEDIR)
 CPPFLAGS += -I/usr/lib/llvm-18/include
+CPPFLAGS += -DLLVM_PREFIX='"$(LLVM_PREFIX)"' -DCLANG_VERSION_STRING='"$(CLANG_VERSION)"'
 # For debug builds: 
 # SANITIZE_FLAGS = -fsanitize=address -fno-omit-frame-pointer -g
 #temporarily disable AddressSanitizer for debugging (ASan can interfere with breakpoints and stack traces):

@@ -146,8 +146,16 @@ int main(int argc, const char **argv) {
     // /usr/include covers libc/system headers.
     {
         HeaderSearchOptions &HSO = CI.getHeaderSearchOpts();
-        HSO.ResourceDir = clang::CompilerInvocation::GetResourcesPath(
+        // Derive resource dir from the llvm-config version used at build time.
+        // GetResourcesPath only works when the binary lives inside the LLVM bin/
+        // directory; for out-of-tree binaries we compute it from llvm-config --prefix.
+        std::string resourceDir = clang::CompilerInvocation::GetResourcesPath(
             argv[0], (void *)(intptr_t)main);
+        if (resourceDir.empty() || !llvm::sys::fs::exists(resourceDir + "/include")) {
+            // Fallback: use the prefix reported by llvm-config at build time
+            resourceDir = LLVM_PREFIX "/lib/clang/" CLANG_VERSION_STRING;
+        }
+        HSO.ResourceDir = resourceDir;
         HSO.AddPath("/usr/local/include",              clang::frontend::System, false, false);
         HSO.AddPath("/usr/include/x86_64-linux-gnu",  clang::frontend::System, false, false);
         HSO.AddPath("/usr/include",                    clang::frontend::System, false, false);
