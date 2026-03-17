@@ -58,7 +58,10 @@ default: directory $(OBJECT)
 directory:
 	mkdir -p $(BUILDDIR) 
 
-$(BUILDDIR)/%.o : $(SOURCEDIR)/%.cpp $(HEADER)
+# Track all .cpp and .h files in src/ so editing any of them triggers a recompile
+SRC_DEPS := $(wildcard $(SOURCEDIR)/*.cpp $(SOURCEDIR)/*.h)
+
+$(BUILDDIR)/%.o : $(SOURCEDIR)/%.cpp $(SRC_DEPS)
 	@echo Compiling $*.cpp
 	$(QUIET)$(CXX) -o $@ -c $(CPPFLAGS) $(CXXFLAGS) $<
 

@@ -1,16 +1,33 @@
 {
-  "target":30,
+  "target":26,
   "constraints": [
     {
       "variable": "userId",
-      "operator": ">",
+      "operator": ">=",
       "value": 0
     },
     {
       "variable": "userId",
       "operator": "<",
       "value": 150000000
+    },
+    {
+      "variable": "serviceId",
+      "operator": ">",
+      "value": 0
+    },
+    {
+      "variable": "serviceId",
+      "operator": "<",
+      "value": 65
+    },
+    {
+      "variable": "userId",
+      "operator": "!=",
+      "value": 0
     }
+
+    
   ],
   "executionEnv": {
     "Arch":"x86",

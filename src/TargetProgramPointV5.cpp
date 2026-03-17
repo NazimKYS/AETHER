@@ -233,6 +233,9 @@ struct DefinitionInfo {
         if (binOp->isAdditiveOp() || binOp->isMultiplicativeOp()) {
             std::string lhs = exprToPyZ3(binOp->getLHS());
             std::string rhs = exprToPyZ3(binOp->getRHS());
+            // If either operand is unresolvable (e.g. a function call), treat the
+            // whole expression as symbolic — no definition, no fresh overflow vars.
+            if (lhs.empty() || rhs.empty()) return "";
             std::string op = getPyZ3BinaryOperator(binOp->getOpcode());
             std::string originalExpr = "(" + lhs + " " + op + " " + rhs + ")";
             
@@ -257,99 +260,83 @@ struct DefinitionInfo {
     return exprToPyZ3(expr);
 }
     static std::string exprToPyZ3(const clang::Expr* expr) {
-        if (!expr) return "smtString";
-        
+        if (!expr) return "";
+
         // Handle implicit casts (very common in Clang AST)
         if (const auto* ice = dyn_cast<clang::ImplicitCastExpr>(expr)) {
             return exprToPyZ3(ice->getSubExpr());
         }
-        
+
         // Handle explicit casts
         if (const auto* cce = dyn_cast<clang::CStyleCastExpr>(expr)) {
             return exprToPyZ3(cce->getSubExpr());
         }
-        
+
         // Handle parentheses
         if (const auto* pe = dyn_cast<clang::ParenExpr>(expr)) {
-            return "(" + exprToPyZ3(pe->getSubExpr()) + ")";
+            std::string inner = exprToPyZ3(pe->getSubExpr());
+            if (inner.empty()) return "";
+            return "(" + inner + ")";
         }
-        
+
         // Handle binary operators (arithmetic, comparison, logical)
         if (const auto* binOp = dyn_cast<clang::BinaryOperator>(expr)) {
             std::string lhs = exprToPyZ3(binOp->getLHS());
             std::string rhs = exprToPyZ3(binOp->getRHS());
+            // Propagate unresolvable operands upward
+            if (lhs.empty() || rhs.empty()) return "";
             std::string op = getPyZ3BinaryOperator(binOp->getOpcode());
-            
-            // Handle special cases for safety
+
             if (binOp->isComparisonOp()) {
-                // Comparison operators: just combine with operator
                 return lhs + " " + op + " " + rhs;
             } else if (binOp->isAdditiveOp() || binOp->isMultiplicativeOp()) {
-                // Arithmetic operators: ensure proper grouping for precedence
                 return "(" + lhs + " " + op + " " + rhs + ")";
-            } else if (binOp->isLogicalOp()) {
-                // Logical operators: map to Python/Z3 syntax
-                if (binOp->getOpcode() == clang::BO_LAnd) {
-                    return "And(" + lhs + ", " + rhs + ")";
-                } else if (binOp->getOpcode() == clang::BO_LOr) {
-                    return "Or(" + lhs + ", " + rhs + ")";
-                }
+            } else if (binOp->getOpcode() == clang::BO_LAnd) {
+                return "And(" + lhs + ", " + rhs + ")";
+            } else if (binOp->getOpcode() == clang::BO_LOr) {
+                return "Or(" + lhs + ", " + rhs + ")";
             } else if (binOp->getOpcode() == clang::BO_EQ) {
                 return lhs + " == " + rhs;
             } else if (binOp->getOpcode() == clang::BO_NE) {
                 return lhs + " != " + rhs;
             }
-            // Fallback for other operators
             return "(" + lhs + " " + op + " " + rhs + ")";
         }
-        
+
         // Handle unary operators
         if (const auto* unaryOp = dyn_cast<clang::UnaryOperator>(expr)) {
-            std::string subExpr = exprToPyZ3(unaryOp->getSubExpr());
-            if (unaryOp->getOpcode() == clang::UO_Minus) {
-                return "(-" + subExpr + ")";
-            } else if (unaryOp->getOpcode() == clang::UO_LNot) {
-                return "Not(" + subExpr + ")";
-            }
-            // Add other unary operators as needed
-            return subExpr;
+            std::string sub = exprToPyZ3(unaryOp->getSubExpr());
+            if (sub.empty()) return "";
+            if (unaryOp->getOpcode() == clang::UO_Minus) return "(-" + sub + ")";
+            if (unaryOp->getOpcode() == clang::UO_LNot)  return "Not(" + sub + ")";
+            return sub;
         }
-        
+
         // Handle variable references (DeclRefExpr)
         if (const auto* dre = dyn_cast<clang::DeclRefExpr>(expr)) {
             std::string varName = dre->getNameInfo().getAsString();
-            
-            // Check if this is an SSA variable that should be substituted
-            // Look up in your varDefs or ssaVarDefs to get the correct SSA name
-            std::string ssaName = varName+"_"+std::to_string(getCurrentSsaVersionOfVariable(varName));
-            
-            if (!ssaName.empty()) {
-                return ssaName;
-            }
-            return varName;
+            int ver = getCurrentSsaVersionOfVariable(varName);
+            if (ver < 0) return varName; // unknown variable — use base name as-is
+            return varName + "_" + std::to_string(ver);
         }
-        
+
         // Handle integer literals
         if (const auto* intLit = dyn_cast<clang::IntegerLiteral>(expr)) {
-            llvm::APInt value = intLit->getValue();
-            
-            // ✅ LLVM 18 compatible conversion
             llvm::SmallString<32> str;
-            value.toString(str, 10, false); // radix=10, signed=false
+            intLit->getValue().toString(str, 10, false);
             return std::string(str.c_str());
         }
-        
-        // Handle floating point literals  
+
+        // Handle floating point literals
         if (const auto* floatLit = dyn_cast<clang::FloatingLiteral>(expr)) {
-            // Convert to string representation
             std::string floatStr;
             llvm::raw_string_ostream ss(floatStr);
             floatLit->getValue().print(ss);
             return ss.str();
         }
-        
-        // Fallback: use the precomputed smtString or dump the expression
-        return "smtString";
+
+        // CallExpr and any other unresolvable expression → treat as symbolic (no definition)
+        return "";
     }
 
     // Helper to map Clang binary operators to PyZ3 operators
@@ -546,6 +533,19 @@ public:
                     tmpStack.pop();
                 }
 
+                // Safety net: if the variable has never been seen before and we are
+                // inside a conditional, reserve version 0 as its symbolic initial value so
+                // the conditional assignment gets version 1 (rollback = version 0, not -1).
+                if (getCurrentSsaVersionOfVariable(varName) < 0 && !gloablPathConditions.empty()) {
+                    SSAVariable initVar(varName, 0);
+                    FullSourceLoc initLoc = globalAstContext->getFullLoc(binOp->getExprLoc());
+                    DefinitionInfo initInfo(initVar, initLoc.getSpellingLineNumber(), 0,
+                                           varTypeStr, "", {}, {}, nullptr);
+                    initInfo.smtDefinitionExpression = "";
+                    initInfo.isCondtionalDefinition = false;
+                    varDefs[initVar.ssaName()] = initInfo;
+                }
+
                 SSAVariable newDef(varName);
 
                 FullSourceLoc fullLoc = globalAstContext->getFullLoc(binOp->getExprLoc());
@@ -694,24 +694,34 @@ public:
         } else {
             llvm::errs() << "Target statement not found!\n";
         }
-        relevantVariables=computeRelevantVariablesWithSSANames(); 
-        cout<<"\n\n# *** Variables Declarations *** \n\n";
-        cout<<genVariableDeclarationPyZ3();
-        
-        cout<<"\n\n# *** Variables Definitions *** \n\n";
-        
-        cout<<genVariableDefinitionPyZ3();
-        
-        cout<<"\n\n# *** Condition path *** \n\n";
-        cout<<genConditionPathPyZ3();
+        relevantVariables=computeRelevantVariablesWithSSANames();
 
-        cout<<"\n\n# *** User constraints *** \n\n";
-        cout<<genConstraintsPyZ3();
+        std::string script;
+        script += "from z3 import *\n";
+        script += "\n\n# *** Variables Declarations *** \n\n";
+        script += genVariableDeclarationPyZ3();
+        script += "\n\n# *** Variables Definitions *** \n\n";
+        script += genVariableDefinitionPyZ3();
+        script += "\n\n# *** Condition path *** \n\n";
+        script += genConditionPathPyZ3();
+        script += "\n\n# *** User constraints *** \n\n";
+        script += genConstraintsPyZ3();
+        script += "\n\n# *** Type range constraints *** \n\n";
+        script += genTypeRangeConstraintsPyZ3();
+        script += "\n\n# *** Checking satisfiability and getting models *** \n\n";
+        script += "print(s.check())\n";
+        script += "if(s.check()==sat):\n";
+        script += "\t print(s.model())\n";
 
-        cout<<"\n\n# *** Checking satisfiability and getting models *** \n\n";
-        cout<<"print(s.check())\n";
-        cout<<"if(s.check()==sat):\n";
-        cout<<"\t print(s.model())\n";
+        // Write to checking.py
+        std::ofstream pyFile("checking.py");
+        if (pyFile.is_open()) {
+            pyFile << script;
+            pyFile.close();
+            cout << "\n[*] Script written to checking.py\n";
+        } else {
+            cerr << "Error: could not write to checking.py\n";
+        }
 
 
 
@@ -809,6 +819,41 @@ public:
         if (isa<BinaryOperator>(stmt)) {
             BinaryOperator* binOp = const_cast<BinaryOperator*>(cast<BinaryOperator>(stmt));
             VisitBinaryOperator(binOp, stmt); // Pass stmt for AST preservation
+        }
+
+        // Register variable declarations (int a = 0; / int b;) as SSA version 0.
+        // Without this, the first conditional assignment becomes version 0 and
+        // its rollback version would be -1 (a_-1).
+        if (isa<DeclStmt>(stmt)) {
+            const DeclStmt* declStmt = cast<DeclStmt>(stmt);
+            for (const Decl* decl : declStmt->decls()) {
+                if (const VarDecl* vd = dyn_cast<VarDecl>(decl)) {
+                    std::string varName = vd->getNameAsString();
+                    if (getCurrentSsaVersionOfVariable(varName) >= 0) continue; // already registered
+
+                    std::string varTypeStr = vd->getType().getAsString();
+                    SSAVariable initVar(varName, 0);
+
+                    FullSourceLoc fullLoc = globalAstContext->getFullLoc(vd->getLocation());
+                    unsigned line = fullLoc.getSpellingLineNumber();
+                    unsigned stmtID = reinterpret_cast<uintptr_t>(vd);
+
+                    std::string smtExpr;
+                    std::vector<std::string> usedVars;
+                    if (vd->hasInit()) {
+                        Expr* init = const_cast<Expr*>(vd->getInit()->IgnoreParenImpCasts());
+                        collectUsedVars(init, usedVars);
+                        smtExpr = DefinitionInfo::handleArithmeticWithOverflow(init);
+                    }
+
+                    DefinitionInfo info(initVar, line, stmtID, varTypeStr, "", usedVars, {}, nullptr);
+                    info.smtDefinitionExpression = smtExpr;
+                    info.isCondtionalDefinition = false; // VarDecl is unconditional in SSA
+                    varDefs[initVar.ssaName()] = info;
+                    lineToDefinitions[line].push_back(info);
+                }
+            }
+            // Fall through to child iteration so targets inside initializers are still found
         }
 
         for (auto child = stmt->child_begin(); child != stmt->child_end(); ++child) {
@@ -1326,6 +1371,63 @@ private:
         return result;
     }
 
+    std::string genTypeRangeConstraintsPyZ3() {
+        std::string result;
+        std::set<std::string> seen; // one range per SSA name
+
+        for (const auto& ssaName : relevantVariables) {
+            if (seen.count(ssaName)) continue;
+            seen.insert(ssaName);
+
+            auto it = varDefs.find(ssaName);
+            if (it == varDefs.end()) continue;
+
+            const std::string& vt = it->second.varType;
+            if (vt.empty()) continue;
+
+            // Determine signedness and bit width from the type string
+            bool isUnsigned = (vt.find("unsigned") != std::string::npos);
+
+            unsigned bits = 0;
+            if (vt.find("short")      != std::string::npos) bits = 16;
+            else if (vt.find("long long") != std::string::npos) bits = 64;
+            else if (vt.find("long")  != std::string::npos) bits = 64; // refined below
+            else if (vt.find("int")   != std::string::npos) bits = 32;
+            else if (vt.find("char")  != std::string::npos) bits = 8;
+
+            if (bits == 0) continue;
+
+            // Refine 'long' width via execution-environment rules (LP64 vs LLP64/ILP32)
+            if (vt == "long" || vt == "unsigned long") {
+                // Recompute via env rules
+                bool longIs32 = false;
+                auto toLow = [](std::string s){
+                    std::transform(s.begin(),s.end(),s.begin(),::tolower); return s; };
+                for (auto& f : sharedExecutionEnv.flags)
+                    if (f == "-m32") { longIs32 = true; break; }
+                std::string osLow = toLow(sharedExecutionEnv.os);
+                if (osLow=="windows"||osLow=="win32"||osLow=="win64"||osLow=="win")
+                    longIs32 = true;
+                std::string archLow = toLow(sharedExecutionEnv.arch);
+                if (archLow=="i386"||archLow=="i686"||archLow=="x86"||archLow=="arm")
+                    longIs32 = true;
+                bits = longIs32 ? 32 : 64;
+            }
+
+            std::string lo, hi;
+            if (isUnsigned) {
+                lo = "0";
+                hi = "2**" + std::to_string(bits) + " - 1";
+            } else {
+                lo = "-2**" + std::to_string(bits - 1);
+                hi = "2**"  + std::to_string(bits - 1) + " - 1";
+            }
+            result += "s.add(" + ssaName + " >= " + lo + ")\n";
+            result += "s.add(" + ssaName + " <= " + hi + ")\n";
+        }
+        return result;
+    }
+
     std::string  genVariableDeclarationPyZ3(){
         std::string fullDeclaration="";
         for (const auto& ssaName : relevantVariables) {
@@ -1450,7 +1552,10 @@ std::string genVariableDefinitionPyZ3() {
             std::string condExpression = "";
             
             if (!def.isCondtionalDefinition) {
-                fullDefinition += ssaName + " = " + def.smtDefinitionExpression + "\n";
+                // Skip uninitialized declarations (int b;) — free symbolic variable, no RHS
+                if (!def.smtDefinitionExpression.empty()) {
+                    fullDefinition += ssaName + " = " + def.smtDefinitionExpression + "\n";
+                }
             } else {
                 if (def.globalConditionContext.size() > 1) {
                     condExpression = "And( ";
@@ -1494,6 +1599,7 @@ void SmtScript::pushIfNotInDefinitionVector(const std::string& def) {
 }
 
 void SmtScript::printVariableDeclarations() {
+    llvm::outs() << "\n from z3 import *\n\n";
     llvm::outs() << "\n# *** Variables Declarations ***\n\n";
     for (const auto& decl : variableDeclarations) {
         llvm::outs() << decl << "\n";

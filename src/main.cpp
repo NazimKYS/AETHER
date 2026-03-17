@@ -140,6 +140,19 @@ int main(int argc, const char **argv) {
     CI.createFileManager();
     CI.createSourceManager(CI.getFileManager());
     SourceManager &SourceMgr = CI.getSourceManager();
+
+    // Configure header search so system headers (e.g. stdint.h) can be found.
+    // ResourceDir provides Clang's built-in headers (stdint.h, limits.h, …).
+    // /usr/include covers libc/system headers.
+    {
+        HeaderSearchOptions &HSO = CI.getHeaderSearchOpts();
+        HSO.ResourceDir = clang::CompilerInvocation::GetResourcesPath(
+            argv[0], (void *)(intptr_t)main);
+        HSO.AddPath("/usr/local/include",              clang::frontend::System, false, false);
+        HSO.AddPath("/usr/include/x86_64-linux-gnu",  clang::frontend::System, false, false);
+        HSO.AddPath("/usr/include",                    clang::frontend::System, false, false);
+    }
+
     CI.createPreprocessor(TU_Module);
     CI.createASTContext();
     CI.createSema(TU_Complete, NULL);
