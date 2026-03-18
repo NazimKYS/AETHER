@@ -8,7 +8,6 @@ symb.txt
 z3env/
 *.ll
 *.jsonl
-KnowledgeBase.json
 LogTracking.txt
 layout_workflow_tool.txt
 makefileOldJanuary2026
