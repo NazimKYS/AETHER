@@ -3,50 +3,160 @@
 ASTContext *sharedASTContext = nullptr;
 ExecutionEnv sharedExecutionEnv;
 std::vector<UserConstraint> sharedConstraints;
+KnowledgeBase sharedKnowledgeBase;
 
 std::string functionNameDump = "";
 
-unsigned getBitWidthForType(clang::QualType ty, const ExecutionEnv& env) {
-    if (env.isEmpty())
-        return (unsigned)sharedASTContext->getTypeSize(ty);
+// ── Knowledge-base loading ────────────────────────────────────────────────────
 
-    bool longIs32 = false;
+void loadKnowledgeBase(const std::string& path) {
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        std::cerr << "[KB] warning: could not open " << path
+                  << " — falling back to built-in defaults\n";
+        return;
+    }
+
+    // allow_exceptions=false: returns a discarded value instead of throwing.
+    json kb = json::parse(f, nullptr, /*allow_exceptions=*/false);
+    if (kb.is_discarded()) {
+        std::cerr << "[KB] parse error: invalid JSON in " << path << "\n";
+        return;
+    }
+
+    // Data models
+    if (kb.contains("dataModels")) {
+        for (auto& [modelName, modelData] : kb["dataModels"].items()) {
+            DataModel dm;
+            dm.name        = modelName;
+            dm.description = modelData.value("description", "");
+            if (modelData.contains("sizes")) {
+                for (auto& [typeName, bits] : modelData["sizes"].items())
+                    dm.sizes[typeName] = bits.get<unsigned>();
+            }
+            sharedKnowledgeBase.dataModels[modelName] = std::move(dm);
+        }
+    }
+
+    // Rules
+    if (kb.contains("rules")) {
+        auto readStrings = [](const json& node, const std::string& key,
+                              std::vector<std::string>& out) {
+            if (node.contains(key) && node[key].is_array())
+                for (auto& v : node[key]) out.push_back(v.get<std::string>());
+        };
+
+        for (auto& r : kb["rules"]) {
+            TypeSizeRule rule;
+            rule.note       = r.value("note", "");
+            rule.dataModel  = r.value("dataModel", "");
+            readStrings(r, "flags",         rule.flags);
+            readStrings(r, "arch",          rule.arch);
+            readStrings(r, "os",            rule.os);
+            readStrings(r, "compiler",      rule.compiler);
+            readStrings(r, "tripleContains",rule.tripleContains);
+            sharedKnowledgeBase.rules.push_back(std::move(rule));
+        }
+    }
+
+    sharedKnowledgeBase.loaded = true;
+    std::cout << "[KB] loaded " << sharedKnowledgeBase.dataModels.size()
+              << " data models, " << sharedKnowledgeBase.rules.size()
+              << " rules from " << path << "\n";
+}
+
+// ── Environment → data model resolution ──────────────────────────────────────
+
+std::string resolveDataModel(const ExecutionEnv& env) {
+    if (!sharedKnowledgeBase.loaded) return "";
+
     auto toLower = [](std::string s) {
         std::transform(s.begin(), s.end(), s.begin(), ::tolower);
         return s;
     };
 
-    for (const auto& flag : env.flags)
-        if (flag == "-m32") { longIs32 = true; break; }
+    std::string archLow     = toLower(env.arch);
+    std::string osLow       = toLower(env.os);
+    std::string compLow     = toLower(env.compiler);
+    std::string tripleLow   = toLower(env.triple);
 
-    std::string osLow = toLower(env.os);
-    if (osLow == "windows" || osLow == "win32" || osLow == "win64" || osLow == "win")
-        longIs32 = true;
+    auto containsAny = [](const std::string& haystack,
+                          const std::vector<std::string>& needles) {
+        for (const auto& n : needles)
+            if (haystack.find(n) != std::string::npos) return true;
+        return false;
+    };
 
-    std::string archLow = toLower(env.arch);
-    if (archLow == "i386" || archLow == "i686" || archLow == "x86" || archLow == "arm")
-        longIs32 = true;
+    auto matchesAny = [](const std::string& value,
+                         const std::vector<std::string>& list) {
+        for (const auto& item : list)
+            if (value == item) return true;
+        return false;
+    };
 
-    if (!env.triple.empty()) {
-        std::string tripleLow = toLower(env.triple);
-        if (tripleLow.find("i386")    != std::string::npos ||
-            tripleLow.find("i686")    != std::string::npos ||
-            tripleLow.find("windows") != std::string::npos)
-            longIs32 = true;
+    for (const auto& rule : sharedKnowledgeBase.rules) {
+        // All non-empty condition lists must match (AND logic within a rule)
+        bool flagMatch     = rule.flags.empty()         ||
+            [&]{ for (auto& f : rule.flags) for (auto& ef : env.flags)
+                     if (toLower(ef) == f) return true; return false; }();
+        bool archMatch     = rule.arch.empty()          || matchesAny(archLow,   rule.arch);
+        bool osMatch       = rule.os.empty()            || matchesAny(osLow,     rule.os);
+        bool compMatch     = rule.compiler.empty()      || matchesAny(compLow,   rule.compiler);
+        bool tripleMatch   = rule.tripleContains.empty()|| containsAny(tripleLow,rule.tripleContains);
+
+        if (flagMatch && archMatch && osMatch && compMatch && tripleMatch)
+            return rule.dataModel;
     }
 
-    ty = ty.getCanonicalType();
-    if (const auto* bt = dyn_cast<clang::BuiltinType>(ty.getTypePtr())) {
-        switch (bt->getKind()) {
-            case clang::BuiltinType::Char_S:  case clang::BuiltinType::Char_U:
-            case clang::BuiltinType::SChar:   case clang::BuiltinType::UChar:    return 8;
-            case clang::BuiltinType::Short:   case clang::BuiltinType::UShort:   return 16;
-            case clang::BuiltinType::Int:     case clang::BuiltinType::UInt:     return 32;
-            case clang::BuiltinType::Long:    case clang::BuiltinType::ULong:    return longIs32 ? 32 : 64;
-            case clang::BuiltinType::LongLong: case clang::BuiltinType::ULongLong: return 64;
-            default: break;
+    return ""; // no rule matched
+}
+
+// ── Type bit-width query ──────────────────────────────────────────────────────
+
+unsigned getBitWidthForType(clang::QualType ty, const ExecutionEnv& env) {
+    // No env specified: let Clang's ASTContext answer based on the host target.
+    if (env.isEmpty())
+        return (unsigned)sharedASTContext->getTypeSize(ty);
+
+    // Resolve the data model from the KB.
+    std::string modelName = resolveDataModel(env);
+    if (!modelName.empty()) {
+        auto it = sharedKnowledgeBase.dataModels.find(modelName);
+        if (it != sharedKnowledgeBase.dataModels.end()) {
+            const auto& sizes = it->second.sizes;
+
+            ty = ty.getCanonicalType();
+            if (const auto* bt = dyn_cast<clang::BuiltinType>(ty.getTypePtr())) {
+                switch (bt->getKind()) {
+                    case clang::BuiltinType::Char_S:
+                    case clang::BuiltinType::Char_U:
+                    case clang::BuiltinType::SChar:
+                    case clang::BuiltinType::UChar:
+                        if (sizes.count("char"))     return sizes.at("char");
+                        break;
+                    case clang::BuiltinType::Short:
+                    case clang::BuiltinType::UShort:
+                        if (sizes.count("short"))    return sizes.at("short");
+                        break;
+                    case clang::BuiltinType::Int:
+                    case clang::BuiltinType::UInt:
+                        if (sizes.count("int"))      return sizes.at("int");
+                        break;
+                    case clang::BuiltinType::Long:
+                    case clang::BuiltinType::ULong:
+                        if (sizes.count("long"))     return sizes.at("long");
+                        break;
+                    case clang::BuiltinType::LongLong:
+                    case clang::BuiltinType::ULongLong:
+                        if (sizes.count("longlong")) return sizes.at("longlong");
+                        break;
+                    default: break;
+                }
+            }
         }
     }
+
+    // Fallback: Clang ASTContext for any type not covered by the data model.
     return (unsigned)sharedASTContext->getTypeSize(ty);
 }
 
@@ -95,7 +205,23 @@ unsigned int getTargetInstructionSourceLine(string targetJsonFile) {
 
 using namespace llvm;
 
+// Locate KnowledgeBase.json: try next to the binary first, then CWD.
+static std::string findKnowledgeBasePath(const char* argv0) {
+    std::string binPath(argv0);
+    auto sep = binPath.find_last_of("/\\");
+    std::string dir = (sep != std::string::npos) ? binPath.substr(0, sep + 1) : "./";
+    std::string candidate = dir + "KnowledgeBase.json";
+    if (std::ifstream(candidate).good()) return candidate;
+    if (std::ifstream("KnowledgeBase.json").good()) return "KnowledgeBase.json";
+    return "";
+}
+
 int main(int argc, const char **argv) {
+    // Load the knowledge base before parsing the target JSON.
+    std::string kbPath = findKnowledgeBasePath(argv[0]);
+    if (!kbPath.empty())
+        loadKnowledgeBase(kbPath);
+
     if (argc >= 3) {
         string fullJsonPath = argv[2];
         targetJsonFile = fullJsonPath.substr(fullJsonPath.find_last_of("/\\") + 1);
@@ -118,9 +244,6 @@ int main(int argc, const char **argv) {
     CI.createSourceManager(CI.getFileManager());
     SourceManager &SourceMgr = CI.getSourceManager();
 
-    // Configure header search so system headers can be found.
-    // ResourceDir (built-in Clang headers: stdint.h, stddef.h, …) is derived from
-    // the LLVM prefix and major version baked in at compile time via the Makefile.
     {
         HeaderSearchOptions &HSO = CI.getHeaderSearchOpts();
         HSO.ResourceDir = LLVM_PREFIX "/lib/clang/" CLANG_VERSION_STRING;

@@ -1,11 +1,34 @@
-*
-!tests/
-tests/*
-!tests/cProgram.c
-!src/
-!src/*
-!.gitignore
-!KnowledgeBase.json
-!target.json
-!launch.json
-!Makefile
+# ── Compiled binaries ─────────────────────────────────────────────────────────
+aether
+ourTool
+build/
+tests/unit_tests
+
+# ── Generated analysis outputs ────────────────────────────────────────────────
+checking.py
+tests/*/checking.py
+oldChecking.py
+output.txt
+
+# ── Personal / scratch files ──────────────────────────────────────────────────
+KnowledgeBase.json
+LogTracking.txt
+layout_workflow_tool.txt
+symb.txt
+solver.py
+makefileOldJanuary2026
+
+# ── IDE / editor ──────────────────────────────────────────────────────────────
+.vscode/
+.claude/
+
+# ── Python virtual environment ────────────────────────────────────────────────
+z3env/
+__pycache__/
+*.pyc
+
+# ── Sample artifacts (generated or machine-specific) ─────────────────────────
+samples/*.ll
+samples/compile_commands.json
+samples/compile_comm_done.txt
+samples/.cache/

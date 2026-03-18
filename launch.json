@@ -2,12 +2,12 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug ourTool (lldb)",
+      "name": "Debug AETHER (lldb)",
       "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/ourTool",
+      "program": "${workspaceFolder}/aether",
       "args": [
-        "${workspaceFolder}/tests/pseudo.c",
+        "${workspaceFolder}/samples/pseudo.c",
         "${workspaceFolder}/target.json"
       ],
       "cwd": "${workspaceFolder}",

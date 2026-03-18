@@ -78,6 +78,36 @@ struct UserConstraint {
 
 extern std::vector<UserConstraint> sharedConstraints;
 
-unsigned getBitWidthForType(clang::QualType ty, const ExecutionEnv& env);
+// ── Knowledge-base types ──────────────────────────────────────────────────────
+
+struct DataModel {
+    std::string name;
+    std::string description;
+    // Sizes in bits keyed by canonical type name:
+    // "char", "short", "int", "long", "longlong"
+    std::unordered_map<std::string, unsigned> sizes;
+};
+
+struct TypeSizeRule {
+    std::string note;
+    std::vector<std::string> flags;
+    std::vector<std::string> arch;
+    std::vector<std::string> os;
+    std::vector<std::string> compiler;
+    std::vector<std::string> tripleContains;
+    std::string dataModel;
+};
+
+struct KnowledgeBase {
+    std::unordered_map<std::string, DataModel> dataModels;
+    std::vector<TypeSizeRule> rules;
+    bool loaded = false;
+};
+
+extern KnowledgeBase sharedKnowledgeBase;
+
+void        loadKnowledgeBase(const std::string& path);
+std::string resolveDataModel(const ExecutionEnv& env);
+unsigned    getBitWidthForType(clang::QualType ty, const ExecutionEnv& env);
 
 #endif

@@ -30,8 +30,8 @@
     
   ],
   "executionEnv": {
-    "Arch":"x86",
-    "OS":"",
+    "Arch":"",
+    "OS":"windows",
     "compiler":"",
     "flags":[],
     "triple":""

@@ -1,0 +1,11 @@
+{
+  "target": 12,
+  "dump": "add_longs",
+  "constraints": [
+    { "variable": "a", "operator": ">", "value": 0 },
+    { "variable": "b", "operator": ">", "value": 0 }
+  ],
+  "executionEnv": {
+    "Arch": "", "OS": "", "compiler": "", "flags": ["-m32"], "triple": ""
+  }
+}

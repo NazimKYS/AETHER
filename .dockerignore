@@ -1,0 +1,16 @@
+build/
+ourTool
+checking.py
+oldChecking.py
+solver.py
+output.txt
+symb.txt
+z3env/
+*.ll
+*.jsonl
+KnowledgeBase.json
+LogTracking.txt
+layout_workflow_tool.txt
+makefileOldJanuary2026
+launch.json
+.git/

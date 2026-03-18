@@ -1,0 +1,11 @@
+{
+  "target": 10,
+  "dump": "check",
+  "constraints": [
+    { "variable": "a", "operator": ">", "value": 0 },
+    { "variable": "b", "operator": ">", "value": 0 }
+  ],
+  "executionEnv": {
+    "Arch": "", "OS": "", "compiler": "", "flags": [], "triple": ""
+  }
+}

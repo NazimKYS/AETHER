@@ -1,5 +1,125 @@
 {
-    "Arithmetic_Operations": {
-        "multiplication": {}
+  "version": "1.0",
+  "description": "Type-size knowledge base for AETHER. Defines C integer sizes per data model and maps execution environments to data models. Rules are evaluated in order — the first match wins.",
+
+  "dataModels": {
+    "LP64": {
+      "description": "64-bit Linux / macOS / BSD (GCC, Clang). long is 64 bits.",
+      "sizes": { "char": 8, "short": 16, "int": 32, "long": 64, "longlong": 64 }
+    },
+    "LLP64": {
+      "description": "64-bit Windows (MSVC, MinGW). long stays 32 bits despite 64-bit pointers.",
+      "sizes": { "char": 8, "short": 16, "int": 32, "long": 32, "longlong": 64 }
+    },
+    "ILP32": {
+      "description": "32-bit systems: Linux x86, macOS 32-bit, ARM Cortex-M, -m32 flag.",
+      "sizes": { "char": 8, "short": 16, "int": 32, "long": 32, "longlong": 64 }
+    },
+    "ILP16": {
+      "description": "16-bit embedded MCUs: AVR (Arduino), MSP430. int and short are 16 bits.",
+      "sizes": { "char": 8, "short": 16, "int": 16, "long": 32, "longlong": 64 }
     }
+  },
+
+  "rules": [
+
+    {
+      "note": "Explicit -m16 flag: 16-bit mode (rare, x86 real mode)",
+      "flags": ["-m16"],
+      "dataModel": "ILP16"
+    },
+    {
+      "note": "Explicit -m32 flag: forces 32-bit mode on any x86_64 host",
+      "flags": ["-m32"],
+      "dataModel": "ILP32"
+    },
+    {
+      "note": "Explicit -m64 flag: forces 64-bit LP64 mode",
+      "flags": ["-m64"],
+      "dataModel": "LP64"
+    },
+
+    {
+      "note": "AVR microcontroller (8-bit Harvard, used in Arduino)",
+      "arch": ["avr"],
+      "dataModel": "ILP16"
+    },
+    {
+      "note": "MSP430 microcontroller (16-bit Texas Instruments)",
+      "arch": ["msp430"],
+      "dataModel": "ILP16"
+    },
+
+    {
+      "note": "32-bit x86 architectures",
+      "arch": ["i386", "i486", "i586", "i686", "x86"],
+      "dataModel": "ILP32"
+    },
+    {
+      "note": "32-bit ARM: Cortex-M, ARMv7, ARM Thumb",
+      "arch": ["arm", "armv7", "armv7-m", "armv7-a", "thumbv7", "thumbv7m"],
+      "dataModel": "ILP32"
+    },
+    {
+      "note": "32-bit MIPS",
+      "arch": ["mips", "mipsel"],
+      "dataModel": "ILP32"
+    },
+    {
+      "note": "32-bit RISC-V",
+      "arch": ["riscv32"],
+      "dataModel": "ILP32"
+    },
+
+    {
+      "note": "Windows OS: always LLP64 regardless of 32/64-bit (MSVC behaviour)",
+      "os": ["windows", "win32", "win64", "win"],
+      "dataModel": "LLP64"
+    },
+    {
+      "note": "MSVC compiler always uses LLP64",
+      "compiler": ["msvc", "cl", "cl.exe"],
+      "dataModel": "LLP64"
+    },
+    {
+      "note": "MinGW on Windows: also LLP64",
+      "compiler": ["mingw", "mingw32", "mingw64"],
+      "dataModel": "LLP64"
+    },
+
+    {
+      "note": "64-bit x86 on Linux/macOS/BSD: LP64",
+      "arch": ["x86_64", "amd64"],
+      "os": ["linux", "macos", "darwin", "freebsd", "openbsd", "netbsd"],
+      "dataModel": "LP64"
+    },
+    {
+      "note": "64-bit ARM (AArch64) on Linux/macOS",
+      "arch": ["aarch64", "arm64", "armv8", "armv8-a"],
+      "os": ["linux", "macos", "darwin"],
+      "dataModel": "LP64"
+    },
+    {
+      "note": "64-bit RISC-V on Linux",
+      "arch": ["riscv64"],
+      "os": ["linux"],
+      "dataModel": "LP64"
+    },
+
+    {
+      "note": "Triple contains windows: LLP64",
+      "tripleContains": ["windows", "win32", "msvc"],
+      "dataModel": "LLP64"
+    },
+    {
+      "note": "Triple contains 32-bit markers: ILP32",
+      "tripleContains": ["i386", "i686", "arm-", "armv7"],
+      "dataModel": "ILP32"
+    },
+    {
+      "note": "Triple contains 64-bit Linux/macOS markers: LP64",
+      "tripleContains": ["x86_64-linux", "x86_64-apple", "aarch64-linux", "aarch64-apple"],
+      "dataModel": "LP64"
+    }
+  ]
 }
