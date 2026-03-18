@@ -9,8 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         g++ make \
  && rm -rf /var/lib/apt/lists/*
 
-# 2. Add the LLVM 18 apt repository with a properly dearmored GPG key.
-#    Using /etc/apt/keyrings/ + [signed-by=...] is the modern, reliable method.
+# 2. Add the LLVM 18 apt repository.
+#    gpg --dearmor converts the ASCII-armored key to binary format (.gpg),
+#    which is required by the modern [signed-by=...] apt source syntax.
 RUN mkdir -p /etc/apt/keyrings \
  && wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
         | gpg --dearmor > /etc/apt/keyrings/llvm.gpg \
@@ -18,9 +19,14 @@ RUN mkdir -p /etc/apt/keyrings \
         > /etc/apt/sources.list.d/llvm-18.list \
  && apt-get update
 
-# 3. LLVM 18 / Clang 18 dev libraries + JSON headers
+# 3. LLVM 18 / Clang 18 packages needed to build a Clang AST tool:
+#    - llvm-18-dev          : LLVM headers (llvm/ADT/..., llvm/Support/...) + llvm-config-18
+#    - libclang-18-dev      : Clang C++ API headers (clang/AST/AST.h, clang/Frontend/..., etc.)
+#    - libclang-cpp18-dev   : libclang-cpp.so symlink required for -lclang-cpp at link time
+#    - clang-18             : Clang compiler (needed for some runtime headers)
 RUN apt-get install -y --no-install-recommends \
         llvm-18-dev \
+        libclang-18-dev \
         libclang-cpp18-dev \
         clang-18 \
         libtinfo-dev \
@@ -28,8 +34,10 @@ RUN apt-get install -y --no-install-recommends \
         nlohmann-json3-dev \
  && rm -rf /var/lib/apt/lists/*
 
-# 4. Sanity check: fail fast if the build toolchain is broken
-RUN llvm-config-18 --version
+# 4. Fail fast if the toolchain or headers are not in place
+RUN llvm-config-18 --version \
+ && test -f /usr/lib/llvm-18/include/clang/AST/AST.h \
+        || (echo "ERROR: clang/AST/AST.h not found — check package install" && exit 1)
 
 # 5. Build AETHER
 WORKDIR /src
@@ -42,7 +50,7 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1. Add the LLVM 18 apt repository (same method as builder)
+# 1. Add LLVM 18 apt repository (same method as builder)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         wget ca-certificates gnupg \
  && mkdir -p /etc/apt/keyrings \
@@ -69,8 +77,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && pip3 install --no-cache-dir z3-solver \
  && rm -rf /var/lib/apt/lists/*
 
-# 4. Copy the compiled binary and knowledge base from the builder stage
-COPY --from=builder /src/aether           /usr/local/bin/aether
+# 4. Copy the compiled binary and knowledge base from the builder stage.
+#    KnowledgeBase.json is placed next to the binary so findKnowledgeBasePath()
+#    finds it automatically from argv[0].
+COPY --from=builder /src/aether            /usr/local/bin/aether
 COPY --from=builder /src/KnowledgeBase.json /usr/local/bin/KnowledgeBase.json
 
 # 5. The user mounts their project into /work
