@@ -6,9 +6,6 @@ int getCurrentSsaVersionOfVariable(string baseName);
 
 
 
-static int FreshVarKcounter = 0;
-static int FreshVarXbarcounter = 0;
-static std::vector<std::string> freshVarNames;
 
 class SmtScript {
 public:
@@ -127,6 +124,10 @@ struct DefinitionInfo {
     
     string smtDefinitionExpression;
 
+    static int freshVarKcounter;
+    static int freshVarXbarcounter;
+    static std::vector<std::string> freshVarNames;
+
 
     DefinitionInfo() = default;
 
@@ -240,8 +241,8 @@ struct DefinitionInfo {
             std::string originalExpr = "(" + lhs + " " + op + " " + rhs + ")";
             
             // Generate fresh variables
-            std::string kVar = "k" + std::to_string(++FreshVarKcounter);
-            std::string xbarVar = "xbar" + std::to_string(++FreshVarXbarcounter);
+            std::string kVar = "k" + std::to_string(++freshVarKcounter);
+            std::string xbarVar = "xbar" + std::to_string(++freshVarXbarcounter);
             freshVarNames.push_back(kVar);
             freshVarNames.push_back(xbarVar);
             
@@ -465,7 +466,24 @@ struct PathCondition {
 };
 
 
-// Helper functions (implement these as shown in previous answer)
+int DefinitionInfo::freshVarKcounter = 0;
+int DefinitionInfo::freshVarXbarcounter = 0;
+std::vector<std::string> DefinitionInfo::freshVarNames;
+
+// Pure string utility: strip the "_N" SSA suffix from a name like "uid_sid_3".
+// Returns the original string unchanged if it has no numeric suffix.
+std::string getBaseNameFromSSA(const std::string& ssaName) {
+    if (ssaName.empty()) return ssaName;
+    size_t lastUnderscore = ssaName.find_last_of('_');
+    if (lastUnderscore == std::string::npos || lastUnderscore == 0 ||
+        lastUnderscore >= ssaName.length() - 1)
+        return ssaName;
+    std::string suffix = ssaName.substr(lastUnderscore + 1);
+    for (char c : suffix)
+        if (!std::isdigit(c)) return ssaName;
+    return ssaName.substr(0, lastUnderscore);
+}
+
 
 class TargetProgramPoint {
     
@@ -653,7 +671,20 @@ public:
         if (!func || !func->hasBody()) {
             return;
         }
-        
+
+        // Register function parameters as version-0 free variables so that
+        // exprToPyZ3 resolves them to "param_0" and they get declared in the script.
+        for (const ParmVarDecl* param : func->parameters()) {
+            std::string paramName = param->getNameAsString();
+            if (paramName.empty() || getCurrentSsaVersionOfVariable(paramName) >= 0)
+                continue;
+            SSAVariable paramVar(paramName, 0);
+            DefinitionInfo info(paramVar, 0, 0, param->getType().getAsString());
+            info.isCondtionalDefinition = false;
+            info.smtDefinitionExpression = "";
+            varDefs[paramVar.ssaName()] = info;
+        }
+
         const Stmt* body = func->getBody();
         //body->dump();
         // Reset state before traversal
@@ -1129,27 +1160,7 @@ private:
 
     
     std::string getBaseNameFromSSA(const std::string& ssaName) const {
-        if (ssaName.empty()) return ssaName;
-        
-        size_t lastUnderscore = ssaName.find_last_of('_');
-        if (lastUnderscore == std::string::npos || lastUnderscore == 0 || 
-            lastUnderscore >= ssaName.length() - 1) {
-            return ssaName;
-        }
-        
-        std::string suffix = ssaName.substr(lastUnderscore + 1);
-        bool isAllDigits = true;
-        for (char c : suffix) {
-            if (!std::isdigit(c)) {
-                isAllDigits = false;
-                break;
-            }
-        }
-        
-        if (isAllDigits) {
-            return ssaName.substr(0, lastUnderscore);
-        }
-        return ssaName;
+        return ::getBaseNameFromSSA(ssaName);
     }
     std::string findLatestSSAName(const std::string& baseName) const {
         int v = getCurrentSsaVersionOfVariable(baseName);
@@ -1442,7 +1453,7 @@ private:
             fullDeclaration=fullDeclaration+"\n";
         }
         // Declare fresh overflow variables (k1, xbar1, etc.) generated during definitions
-        for (const auto& freshVar : freshVarNames) {
+        for (const auto& freshVar : DefinitionInfo::freshVarNames) {
             std::string decl = freshVar + " = Int('" + freshVar + "')";
             fullDeclaration = fullDeclaration + decl + "\n";
             pythonScript.pushIfNotInDeclarationVector(decl);

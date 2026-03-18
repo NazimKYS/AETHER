@@ -1,5 +1,9 @@
 #include "main.h"
 
+ASTContext *sharedASTContext = nullptr;
+ExecutionEnv sharedExecutionEnv;
+std::vector<UserConstraint> sharedConstraints;
+
 std::string functionNameDump = "";
 
 unsigned getBitWidthForType(clang::QualType ty, const ExecutionEnv& env) {
@@ -46,7 +50,7 @@ unsigned getBitWidthForType(clang::QualType ty, const ExecutionEnv& env) {
     return (unsigned)sharedASTContext->getTypeSize(ty);
 }
 
-#include "TargetProgramPointV5.cpp"
+#include "Analysis.cpp"
 
 unsigned int sourceLineOfTargetStmt;
 string       targetJsonFile;
@@ -93,10 +97,10 @@ using namespace llvm;
 
 int main(int argc, const char **argv) {
     if (argc >= 3) {
-        string filePath = argv[2];
-        targetJsonFile = filePath.substr(filePath.find_last_of("/\\") + 1);
+        string fullJsonPath = argv[2];
+        targetJsonFile = fullJsonPath.substr(fullJsonPath.find_last_of("/\\") + 1);
         cout << "file name : " << targetJsonFile << "\n";
-        sourceLineOfTargetStmt = getTargetInstructionSourceLine(targetJsonFile);
+        sourceLineOfTargetStmt = getTargetInstructionSourceLine(fullJsonPath);
     } else {
         cout << "not enough arguments\n";
         sourceLineOfTargetStmt = 22;

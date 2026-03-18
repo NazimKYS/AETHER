@@ -54,7 +54,7 @@ using std::chrono::duration;
 class TargetProgramPoint;
 struct SSAVariable;
 
-ASTContext *sharedASTContext;
+extern ASTContext *sharedASTContext;
 
 struct ExecutionEnv {
     std::string arch;
@@ -68,7 +68,7 @@ struct ExecutionEnv {
     }
 };
 
-ExecutionEnv sharedExecutionEnv;
+extern ExecutionEnv sharedExecutionEnv;
 
 struct UserConstraint {
     std::string variable;
@@ -76,7 +76,7 @@ struct UserConstraint {
     std::string value;
 };
 
-std::vector<UserConstraint> sharedConstraints;
+extern std::vector<UserConstraint> sharedConstraints;
 
 unsigned getBitWidthForType(clang::QualType ty, const ExecutionEnv& env);
 

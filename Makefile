@@ -50,7 +50,7 @@ HEAD      = main
 HEADER = $(join $(addsuffix $(SOURCEDIR)/, $(dir $(HEAD))), $(notdir $(HEAD:=.h)))
 OBJECT = $(join $(addsuffix $(BUILDDIR)/, $(dir $(SOURCE))), $(notdir $(SOURCE:=.o)))
 
-EXECUTABLE = ourTool
+EXECUTABLE = aether
 
 all: default
 
@@ -70,5 +70,19 @@ $(BUILDDIR)/%.o : $(SOURCEDIR)/%.cpp $(SRC_DEPS)
 	$(QUIET)$(CXX) -o $@ -c $(CPPFLAGS) $(CXXFLAGS) $<
 
 
+UNIT_TEST_BIN = tests/unit_tests
+
+unit-test: $(UNIT_TEST_BIN)
+	@echo Running unit tests...
+	$(UNIT_TEST_BIN)
+
+$(UNIT_TEST_BIN): tests/unit_tests.cpp $(SRC_DEPS) | directory
+	@echo Compiling unit_tests.cpp
+	$(QUIET)$(CXX) -o $@ $(CPPFLAGS) $(CXXFLAGS) $< $(CLANGLIBS) $(LLVMLIBS) $(LDFLAGS)
+
+test: unit-test
+	@echo Running integration tests...
+	bash tests/run_tests.sh
+
 clean:
-	$(QUIET)rm -rf $(EXECUTABLE) $(BUILDDIR)
+	$(QUIET)rm -rf $(EXECUTABLE) $(BUILDDIR) $(UNIT_TEST_BIN)
