@@ -15,7 +15,7 @@ LDFLAGS += -L/usr/lib/llvm-18/lib -ldl -ltinfo -lpthread
 COMMON_FLAGS= -Wextra -fexceptions 
 
 LLVM_PREFIX   := $(shell $(LLVM_CONFIG) --prefix)
-CLANG_VERSION := $(shell $(LLVM_CONFIG) --version | cut -d. -f1-2)
+CLANG_VERSION := $(shell $(LLVM_CONFIG) --version | cut -d. -f1)
 
 CXXFLAGS+=$(COMMON_FLAGS) $(shell $(LLVM_CONFIG) --cxxflags)
 CPPFLAGS+=$(shell $(LLVM_CONFIG) --cppflags) -I$(SOURCEDIR)

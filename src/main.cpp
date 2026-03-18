@@ -1,32 +1,6 @@
 #include "main.h"
 
-static unsigned long visitStmtCall = 0;
-
-llvm::StringRef get_source_text(clang::SourceRange range, const clang::SourceManager &sm) {
-    clang::LangOptions lo;
-    auto start_loc      = sm.getSpellingLoc(range.getBegin());
-    auto last_token_loc = sm.getSpellingLoc(range.getEnd());
-    auto end_loc        = clang::Lexer::getLocForEndOfToken(last_token_loc, 0, sm, lo);
-    return get_source_text_raw(clang::SourceRange{start_loc, end_loc}, sm);
-}
-
-llvm::StringRef get_source_text_raw(clang::SourceRange range, const clang::SourceManager &sm) {
-    return clang::Lexer::getSourceText(
-        clang::CharSourceRange::getCharRange(range), sm, clang::LangOptions());
-}
-
 std::string functionNameDump = "";
-
-#include "BinaryElement.cpp"
-#include "SmtSolver.cpp"
-
-struct StmtAttributes {
-    int64_t    id;
-    const Stmt *st;
-    StmtAttributes(int64_t Id, const Stmt *St) : id(Id), st(St) {}
-};
-
-Stmt *globalScopeTargetStmt;
 
 unsigned getBitWidthForType(clang::QualType ty, const ExecutionEnv& env) {
     if (env.isEmpty())
@@ -111,7 +85,6 @@ unsigned int getTargetInstructionSourceLine(string targetJsonFile) {
     return targetInstruction;
 }
 
-#include "MyASTVisitor.cpp"
 #include "ConditionPathAstVisitor.cpp"
 #include "ConditionPathAstConsumer.cpp"
 #include "AggregateASTConsumer.cpp"
@@ -141,24 +114,15 @@ int main(int argc, const char **argv) {
     CI.createSourceManager(CI.getFileManager());
     SourceManager &SourceMgr = CI.getSourceManager();
 
-    // Configure header search so system headers (e.g. stdint.h) can be found.
-    // ResourceDir provides Clang's built-in headers (stdint.h, limits.h, …).
-    // /usr/include covers libc/system headers.
+    // Configure header search so system headers can be found.
+    // ResourceDir (built-in Clang headers: stdint.h, stddef.h, …) is derived from
+    // the LLVM prefix and major version baked in at compile time via the Makefile.
     {
         HeaderSearchOptions &HSO = CI.getHeaderSearchOpts();
-        // Derive resource dir from the llvm-config version used at build time.
-        // GetResourcesPath only works when the binary lives inside the LLVM bin/
-        // directory; for out-of-tree binaries we compute it from llvm-config --prefix.
-        std::string resourceDir = clang::CompilerInvocation::GetResourcesPath(
-            argv[0], (void *)(intptr_t)main);
-        if (resourceDir.empty() || !llvm::sys::fs::exists(resourceDir + "/include")) {
-            // Fallback: use the prefix reported by llvm-config at build time
-            resourceDir = LLVM_PREFIX "/lib/clang/" CLANG_VERSION_STRING;
-        }
-        HSO.ResourceDir = resourceDir;
-        HSO.AddPath("/usr/local/include",              clang::frontend::System, false, false);
+        HSO.ResourceDir = LLVM_PREFIX "/lib/clang/" CLANG_VERSION_STRING;
+        HSO.AddPath("/usr/local/include",             clang::frontend::System, false, false);
         HSO.AddPath("/usr/include/x86_64-linux-gnu",  clang::frontend::System, false, false);
-        HSO.AddPath("/usr/include",                    clang::frontend::System, false, false);
+        HSO.AddPath("/usr/include",                   clang::frontend::System, false, false);
     }
 
     CI.createPreprocessor(TU_Module);
