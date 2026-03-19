@@ -5,8 +5,6 @@ ExecutionEnv sharedExecutionEnv;
 std::vector<UserConstraint> sharedConstraints;
 KnowledgeBase sharedKnowledgeBase;
 
-std::string functionNameDump = "";
-
 // ── Knowledge-base loading ────────────────────────────────────────────────────
 
 void loadKnowledgeBase(const std::string& path) {
@@ -170,9 +168,7 @@ unsigned int getTargetInstructionSourceLine(string targetJsonFile) {
     json data = json::parse(f);
 
     int targetInstruction = data["target"].get<int>();
-    functionNameDump      = data["dump"].get<std::string>();
     cout << "target instruction : " << targetInstruction << "\n";
-    cout << "function dump      : " << functionNameDump  << "\n";
 
     if (data.contains("executionEnv")) {
         auto& env = data["executionEnv"];
