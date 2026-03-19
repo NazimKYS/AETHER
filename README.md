@@ -1,4 +1,4 @@
-# AETHER — Architecture-aware Execution and THeoretical Reasoning
+# AETHER — Architecture-aware Execution and THEoretical Reasoning
 
 **AETHER** is a path-sensitive static analysis tool for C programs.
 Given a target line in a function, it computes the exact conditions required to reach that line, models all relevant integer arithmetic including overflow, and discharges the resulting constraints to the **Z3 SMT solver** to determine whether the path is reachable — and if so, **what concrete input values witness the reachability**.
