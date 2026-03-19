@@ -39,16 +39,38 @@ Z3 returns the exact witness: `userId = 134217728`, `serviceId = 64` → product
 docker pull nazimkys/aether:latest
 ```
 
-### 2. Analyse your first program
+### 2. Clone the repository and run the included sample
+
+```bash
+git clone https://github.com/NazimKYS/aether.git
+cd aether
+```
 
 ```bash
 docker run --rm \
   -v $(pwd):/work \
   nazimkys/aether \
-  /work/my_program.c /work/target.json
+  /work/samples/pseudo.c /work/target.json
 ```
 
-The tool reads both files from `/work/` (your current directory mounted into the container) and prints the Z3 result directly to the terminal.
+The tool mounts your current directory as `/work/` inside the container and prints the Z3 result to the terminal.
+
+Expected output:
+```
+sat
+[serviceId_0 = 64, userId_0 = 134217728, k1 = 2, xbar1 = 0]
+```
+
+### 3. Analyse your own program
+
+Place your `.c` file and a `target.json` in any folder, then:
+
+```bash
+docker run --rm \
+  -v /path/to/your/folder:/work \
+  nazimkys/aether \
+  /work/your_program.c /work/target.json
+```
 
 ---
 
