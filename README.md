@@ -33,43 +33,69 @@ Z3 returns the exact witness: `userId = 134217728`, `serviceId = 64` → product
 
 ## Quick start — Docker
 
+> **You do not need to clone this repository.** Just pull the image and point it at your own files.
+
 ### 1. Pull the image
 
 ```bash
 docker pull nazimkys/aether:latest
 ```
 
-### 2. Clone the repository and run the included sample
+### 2. Analyse your own program
 
-```bash
-git clone https://github.com/NazimKYS/aether.git
-cd aether
-```
-
-```bash
-docker run --rm \
-  -v $(pwd):/work \
-  nazimkys/aether \
-  /work/samples/pseudo.c /work/target.json
-```
-
-The tool mounts your current directory as `/work/` inside the container and prints the Z3 result to the terminal.
-
-Expected output:
-```
-sat
-[serviceId_0 = 64, userId_0 = 134217728, k1 = 2, xbar1 = 0]
-```
-
-### 3. Analyse your own program
-
-Place your `.c` file and a `target.json` in any folder, then:
+Create a folder with your C file and a `target.json`, then run:
 
 ```bash
 docker run --rm \
   -v /path/to/your/folder:/work \
   nazimkys/aether \
   /work/your_program.c /work/target.json
+```
+
+**Minimal `target.json`** — just ask "is line N reachable?":
+
+```json
+{
+  "target": 10,
+  "constraints": [],
+  "executionEnv": { "Arch": "", "OS": "", "compiler": "", "flags": [], "triple": "" }
+}
+```
+
+Set `"target"` to the **line number** of the statement you want to reach (a function call, assignment, or return — not a blank line or `{`).
+
+Add `"constraints"` to model what you assume about the inputs — AETHER checks whether those assumptions can be violated:
+
+```json
+{
+  "target": 10,
+  "constraints": [
+    { "variable": "x", "operator": ">=", "value": 0   },
+    { "variable": "x", "operator": "<",  "value": 1000 }
+  ],
+  "executionEnv": { "Arch": "x86_64", "OS": "linux", "compiler": "", "flags": [], "triple": "" }
+}
+```
+
+See the [field reference](#field-reference) below for all options.
+
+### 3. Try the bundled sample
+
+To run the included example, clone the repo first:
+
+```bash
+git clone https://github.com/NazimKYS/AETHER.git
+cd AETHER
+docker run --rm \
+  -v $(pwd):/work \
+  nazimkys/aether \
+  /work/samples/pseudo.c /work/target.json
+```
+
+Expected output:
+```
+sat
+[serviceId_0 = 64, userId_0 = 134217728, k1 = 2, xbar1 = 0]
 ```
 
 ---
@@ -123,7 +149,7 @@ void foo(char username[], char password[]) {
 }
 ```
 
-#### Field reference
+#### Field reference {#field-reference}
 
 | Field | Type | Description |
 |---|---|---|
