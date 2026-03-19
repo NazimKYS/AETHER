@@ -508,7 +508,7 @@ public:
         globalAstContext = &astContext;
         sharedASTContext = &astContext;
         //cout << "from target " << globalTargetStmt->getID(*globalAstContext)<< "\n";
-        globalTargetStmt->dump();
+        //globalTargetStmt->dump();
     }
 
 
@@ -590,15 +590,14 @@ public:
 
             }
        
-            else{
-                llvm::outs() << "DEBUG: Inside Assignment Binary Operator type not handled: \n";
-                lhs->dump();
-            }
-        }else{
-            llvm::outs() << "DEBUG: VisitBinaryOperator statement type not handled: " <<  binOp->getOpcodeStr()  << "\n";
-            binOp->dump();
-
-        }
+            //else{
+            //    llvm::outs() << "DEBUG: Inside Assignment Binary Operator type not handled: \n";
+            //    lhs->dump();
+            //}
+        }//else{
+            //llvm::outs() << "DEBUG: VisitBinaryOperator statement type not handled: " <<  binOp->getOpcodeStr()  << "\n";
+            //binOp->dump();
+        //}
     return true;
 }
   
