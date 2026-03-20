@@ -182,8 +182,10 @@ struct DefinitionInfo {
         const BinaryOperator *binOpStmt=dyn_cast<BinaryOperator>(defStmt);
             //Expr *lhs = (binOpStmt->getLHS())->IgnoreImpCasts();
         const Expr *rhs = (binOpStmt->getRHS())->IgnoreImpCasts();
-        
+
         smtDefinitionExpression = handleArithmeticWithOverflow(rhs);
+        if (smtDefinitionExpression.empty() && isa<clang::CallExpr>(rhs))
+            smtDefinitionExpression = symbolicIntTag(binOpStmt->getLHS()->IgnoreImpCasts()->getType());
 
        
     }
@@ -260,6 +262,14 @@ struct DefinitionInfo {
     }
     return exprToPyZ3(expr);
 }
+
+    // Returns a symbolic-variable tag for a function-call return of integer type.
+    // e.g. "SymbInt32" for int, "SymbInt64" for long on LP64, "SymbInt16" for short.
+    static std::string symbolicIntTag(clang::QualType ty) {
+        unsigned bits = getBitWidthForType(ty, sharedExecutionEnv);
+        return "SymbInt" + std::to_string(bits);
+    }
+
     static std::string exprToPyZ3(const clang::Expr* expr) {
         if (!expr) return "";
 
@@ -874,6 +884,8 @@ public:
                         Expr* init = const_cast<Expr*>(vd->getInit()->IgnoreParenImpCasts());
                         collectUsedVars(init, usedVars);
                         smtExpr = DefinitionInfo::handleArithmeticWithOverflow(init);
+                        if (smtExpr.empty() && isa<clang::CallExpr>(init))
+                            smtExpr = DefinitionInfo::symbolicIntTag(vd->getType());
                     }
 
                     DefinitionInfo info(initVar, line, stmtID, varTypeStr, "", usedVars, {}, nullptr);
@@ -1343,7 +1355,7 @@ private:
             info.found = true;
             info.baseName = def.ssaVar.name;
             info.version = def.ssaVar.version;
-            info.exprString = def.exprString;
+            info.exprString = def.smtDefinitionExpression.empty() ? def.exprString : def.smtDefinitionExpression;
             info.pathConditions = def.conditionContext;
         }
         return info;
@@ -1562,9 +1574,15 @@ std::string genVariableDefinitionPyZ3() {
             std::string condExpression = "";
             
             if (!def.isCondtionalDefinition) {
-                // Skip uninitialized declarations (int b;) — free symbolic variable, no RHS
                 if (!def.smtDefinitionExpression.empty()) {
-                    fullDefinition += ssaName + " = " + def.smtDefinitionExpression + "\n";
+                    if (def.smtDefinitionExpression.rfind("SymbInt", 0) == 0) {
+                        // Variable assigned from a function call: free symbolic integer.
+                        // Range constraints are applied in the type-range section below.
+                        fullDefinition += "# " + ssaName + " is a free symbolic variable ("
+                                          + def.smtDefinitionExpression + ") — assigned from function call\n";
+                    } else {
+                        fullDefinition += ssaName + " = " + def.smtDefinitionExpression + "\n";
+                    }
                 }
             } else {
                 if (def.globalConditionContext.size() > 1) {
