@@ -213,6 +213,10 @@ static std::string findKnowledgeBasePath(const char* argv0) {
 }
 
 int main(int argc, const char **argv) {
+    // Make stdout unbuffered so output order is consistent whether or not
+    // stdout is connected to a TTY (e.g. inside Docker).
+    std::cout << std::unitbuf;
+
     // Load the knowledge base before parsing the target JSON.
     std::string kbPath = findKnowledgeBasePath(argv[0]);
     if (!kbPath.empty())
@@ -243,6 +247,11 @@ int main(int argc, const char **argv) {
     {
         HeaderSearchOptions &HSO = CI.getHeaderSearchOpts();
         HSO.ResourceDir = LLVM_PREFIX "/lib/clang/" CLANG_VERSION_STRING;
+        // Add Clang's own built-in headers (stddef.h, stdint.h, …) explicitly.
+        // Without this, Clang's manual CompilerInstance setup does not add the
+        // resource-dir include subdir to the search path automatically.
+        HSO.AddPath(LLVM_PREFIX "/lib/clang/" CLANG_VERSION_STRING "/include",
+                    clang::frontend::System, false, false);
         HSO.AddPath("/usr/local/include",             clang::frontend::System, false, false);
         HSO.AddPath("/usr/include/x86_64-linux-gnu",  clang::frontend::System, false, false);
         HSO.AddPath("/usr/include",                   clang::frontend::System, false, false);
