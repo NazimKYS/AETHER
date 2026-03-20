@@ -23,6 +23,7 @@ public:
             (visitor.targetPoint).exploreFunctionByStmt();
             auto endAnalysis = high_resolution_clock::now();
 
+            llvm::outs().flush();   // flush LLVM stream before launching Z3
             std::cout << std::flush;
             auto startZ3 = high_resolution_clock::now();
             int ret = std::system("python3 checking.py");

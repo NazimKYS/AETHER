@@ -246,12 +246,24 @@ int main(int argc, const char **argv) {
 
     {
         HeaderSearchOptions &HSO = CI.getHeaderSearchOpts();
-        HSO.ResourceDir = LLVM_PREFIX "/lib/clang/" CLANG_VERSION_STRING;
-        // Add Clang's own built-in headers (stddef.h, stdint.h, …) explicitly.
-        // Without this, Clang's manual CompilerInstance setup does not add the
-        // resource-dir include subdir to the search path automatically.
-        HSO.AddPath(LLVM_PREFIX "/lib/clang/" CLANG_VERSION_STRING "/include",
-                    clang::frontend::System, false, false);
+
+        // Probe for the Clang built-in resource directory at runtime.
+        // The compile-time CLANG_VERSION_STRING may be a full version like "18.1.3"
+        // while the actual installed path on Ubuntu uses only the major version "18".
+        std::string resourceDir;
+        for (const auto& candidate : {
+                LLVM_PREFIX "/lib/clang/" CLANG_VERSION_STRING,
+                "/usr/lib/llvm-18/lib/clang/18",
+                "/usr/lib/clang/18"}) {
+            if (std::ifstream(std::string(candidate) + "/include/stddef.h").good()) {
+                resourceDir = candidate;
+                break;
+            }
+        }
+        if (!resourceDir.empty()) {
+            HSO.ResourceDir = resourceDir;
+            HSO.AddPath(resourceDir + "/include", clang::frontend::System, false, false);
+        }
         HSO.AddPath("/usr/local/include",             clang::frontend::System, false, false);
         HSO.AddPath("/usr/include/x86_64-linux-gnu",  clang::frontend::System, false, false);
         HSO.AddPath("/usr/include",                   clang::frontend::System, false, false);
