@@ -80,10 +80,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 4. Copy the compiled binary and knowledge base from the builder stage.
 #    KnowledgeBase.json is placed next to the binary so findKnowledgeBasePath()
 #    finds it automatically from argv[0].
-COPY --from=builder /src/aether            /usr/local/bin/aether
+COPY --from=builder /src/aether             /usr/local/bin/aether
 COPY --from=builder /src/KnowledgeBase.json /usr/local/bin/KnowledgeBase.json
 
-# 5. The user mounts their project into /work
+# 5. Copy the Clang built-in resource directory (stddef.h, stdint.h, …) from the
+#    builder stage. The clang-18 package is NOT installed in the runtime stage to
+#    keep the image small, but AETHER's CompilerInstance needs these headers to
+#    parse user C files without 'stddef.h not found' errors.
+COPY --from=builder /usr/lib/llvm-18/lib/clang /usr/lib/llvm-18/lib/clang
+
+# 6. Bundle the sample program and default target.json so users can try AETHER
+#    without cloning the repository.
+COPY --from=builder /src/samples    /usr/local/share/aether/samples
+COPY --from=builder /src/target.json /usr/local/share/aether/target.json
+
+# 7. The user mounts their project into /work
 WORKDIR /work
 
 ENTRYPOINT ["aether"]
