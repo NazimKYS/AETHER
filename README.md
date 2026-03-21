@@ -7,18 +7,29 @@ Given a target line in a function, it computes the exact conditions required to 
 
 ## What problem does it solve?
 
-Consider an access-control check like:
+Consider a service platform with two privilege levels:
+
+- **Administrator** (`userId = 0`) — read and write access
+- **Regular users** (`userId > 0`, range `1 … 150 000 000`) — read-only access
+- **64 services**, numbered `serviceId = 1 … 64`
+
+Instead of writing the obvious `if (userId == 0)` check, the developer chose a **security-through-obscurity** technique to hide the admin identity in the access-control logic:
 
 ```c
 long int uid_sid = (long)userId * serviceId;
 if (uid_sid == 0) {
-    readAndWriteService(uid_sid, serviceId);   // ← privileged branch
+    readAndWriteService(uid_sid, serviceId);   // ← admin branch (read + write)
+} else {
+    readOnlyService(uid_sid, serviceId);       // ← regular user branch (read only)
 }
 ```
 
-A code reviewer may assume this branch is dead when `userId != 0` and `serviceId > 0`.
-AETHER proves this assumption wrong: on a 32-bit architecture (Windows, `-m32`, x86/Intel/AMD), the multiplication can **overflow** and wrap to zero, silently granting write access.
-Z3 returns the exact witness: `userId = 134217728`, `serviceId = 64` → product overflows to `0`.
+The developer's reasoning: since `serviceId` is always between 1 and 64, the product `userId × serviceId` can be zero **only if** `userId = 0`. Regular users (`userId > 0`) should therefore always land in the `else` branch.
+
+**The security question:** Can a regular user (`userId ≠ 0`) ever reach the admin branch?
+
+AETHER proves the answer is **yes** on a 32-bit architecture (Windows x86, or any platform where `long` is 32 bits): the multiplication silently **overflows** and wraps to zero, bypassing the access check.
+Z3 returns the exact witness: `userId = 134217728`, `serviceId = 64` → `134217728 × 64 = 8 589 934 592 = 2 × 2³² + 0` → stored as `0`.
 
 ---
 
@@ -81,15 +92,13 @@ See the [field reference](#field-reference) below for all options.
 
 ### 3. Try the bundled sample
 
-To run the included example, clone the repo first:
+The sample program and its `target.json` are included **inside the image** — no cloning required:
 
 ```bash
-git clone https://github.com/NazimKYS/AETHER.git
-cd AETHER
 docker run --rm \
-  -v $(pwd):/work \
   nazimkys/aether \
-  /work/samples/pseudo.c /work/target.json
+  /usr/local/share/aether/samples/pseudo.c \
+  /usr/local/share/aether/target.json
 ```
 
 Expected output:
@@ -104,30 +113,39 @@ sat
 
 ### The C program — `samples/pseudo.c`
 
+The function below implements the access-control logic described above.
+`random_int(a, b)` represents any integer source with a known range (e.g. a database lookup or user input).
+
 ```c
-void readAndWriteService(int a, int b) {}
-void readOnlyService(int a, int b) {}
+void readAndWriteService(int a, int b) {}   // admin: read + write
+void readOnlyService(int a, int b) {}       // regular user: read only
 
 void foo(char username[], char password[]) {
-    int userId   = random_int(0, 150000000); // getUserId(username,password)
-    int serviceId = random_int(1, 64);
+    int userId    = random_int(0, 150000000); // 0 = admin, 1…150M = regular users
+    int serviceId = random_int(1, 64);        // 64 available services
+
+    // Obfuscated admin check: developer assumes only userId=0 makes this zero
     long int uid_sid = (long)userId * serviceId;
 
     if (uid_sid == 0) {
-        readAndWriteService(uid_sid, serviceId);   // line 26 — privileged
+        readAndWriteService(uid_sid, serviceId);   // line 26 — admin branch
     } else {
-        readOnlyService(uid_sid, serviceId);
+        readOnlyService(uid_sid, serviceId);       // regular user branch
     }
 }
 ```
 
-**Question:** Can `readAndWriteService` (line 26) ever be called when `userId != 0` and `serviceId > 0`?
+**Security question:** Can line 26 (`readAndWriteService`) ever be reached when `userId ≠ 0` and `serviceId ∈ [1, 64]`?
+The developer assumed no — AETHER will tell us whether that assumption holds.
 
 ---
 
 ### The target file — `target.json`
 
-`target.json` is the single entry point that tells AETHER **what to analyse** and **under what conditions**.
+`target.json` tells AETHER **which line to reach** and **what to assume about the inputs**.
+
+The constraints below encode exactly the developer's assumption: `userId` is a regular user (non-zero, within the valid user range) and `serviceId` is a valid service number.
+AETHER will search for an input that satisfies these constraints AND still reaches line 26 — proving the admin branch reachable despite the protection.
 
 ```json
 {
@@ -147,6 +165,9 @@ void foo(char username[], char password[]) {
     "triple":   ""
   }
 }
+```
+
+The `executionEnv` targets a 32-bit Windows x86 build — the platform where `long` is 32 bits (LLP64 data model), making the multiplication overflow possible.
 ```
 
 #### Field reference {#field-reference}
@@ -174,11 +195,11 @@ void foo(char username[], char password[]) {
 #### With Docker
 
 ```bash
-# From the repository root (where target.json lives)
+# Using the sample bundled inside the image (no clone needed)
 docker run --rm \
-  -v $(pwd):/work \
   nazimkys/aether \
-  /work/samples/pseudo.c /work/target.json
+  /usr/local/share/aether/samples/pseudo.c \
+  /usr/local/share/aether/target.json
 ```
 
 #### Built from source (local)
@@ -218,20 +239,22 @@ sat
 
 ### Understanding the result
 
-**`sat`** means the path to line 26 IS reachable under the given constraints.
+**`sat`** means the admin branch (line 26) IS reachable under the stated constraints — the developer's assumption is broken.
 
-The model gives you the **concrete witness**:
+Z3 gives you the **concrete attack input**:
 
 | Variable | Value | Meaning |
 |---|---|---|
-| `userId_0` | `134217728` | `userId = 2²⁷` |
-| `serviceId_0` | `64` | `serviceId = 64` |
-| `k1` | `2` | the product wrapped around **2 times** |
-| `xbar1` | `0` | the overflow residue = **0** |
+| `userId_0` | `134217728` | A regular user ID (`= 2²⁷`, not the admin) |
+| `serviceId_0` | `64` | A valid service ID |
+| `k1` | `2` | The product overflowed **2 times** |
+| `xbar1` | `0` | The residue stored in `uid_sid` is **0** |
 
-Verification: `134217728 × 64 = 8589934592 = 2 × 2³² + 0` → stored as `0` in a 32-bit `long` on Windows/x86.
+Arithmetic proof: `134 217 728 × 64 = 8 589 934 592 = 2 × 2³² + 0`
+On a 32-bit `long` (Windows/x86), only the low 32 bits are kept → `0`.
 
-**Conclusion:** A caller with `userId = 134217728` and `serviceId = 64` bypasses the zero-check and gains write access — a real **integer overflow vulnerability**.
+**Conclusion:** A regular user with `userId = 134 217 728` accessing service `64` passes the `uid_sid == 0` check and gains **read + write** (admin) access — a real **integer overflow privilege-escalation vulnerability**.
+The obfuscation technique the developer relied on is bypassable through arithmetic overflow.
 
 ---
 
